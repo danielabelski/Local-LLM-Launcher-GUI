@@ -32,6 +32,7 @@ Local-LLM-Launcher-GUI/
 │   ├── failures.py                # Translates engine log errors to plain English
 │   ├── downloads.py               # HuggingFace search + download manager
 │   ├── registry.py                # Persists/manages running server processes
+│   ├── updates.py                 # Isolated source builds of llama.cpp / vLLM
 │   ├── config.py                  # User settings (HF token, GGUF folders, etc.)
 │   ├── data/
 │   │   ├── flags_vllm.json         # vLLM flag catalog (label, help, type, category)
@@ -40,6 +41,9 @@ Local-LLM-Launcher-GUI/
 │   ├── engines/
 │   │   ├── _args.py                # Shared: config dict → CLI args using the catalog
 │   │   ├── base.py                 # LocalServer: subprocess lifecycle, logs, health
+│   │   ├── placement.py            # GPU-list, split and NUMA validation; numactl wrapper
+│   │   ├── vllm_backends.py        # Backend-choice compatibility checks
+│   │   ├── vllm_capabilities.py    # Probes the selected vLLM runtime (flags, b12x)
 │   │   ├── vllm_native.py          # `vllm serve ...` command builder
 │   │   ├── vllm_docker.py          # `docker run vllm/vllm-openai ...` command builder
 │   │   └── llamacpp.py             # `llama-server ...` command builder
@@ -56,7 +60,7 @@ Local-LLM-Launcher-GUI/
 │           ├── Launch.jsx           # The flag panel + advisor + launch button
 │           ├── Servers.jsx          # Running servers, logs, test chat
 │           └── Settings.jsx         # HF token, GGUF folders, llama.cpp path, about
-└── tests/                           # pytest — 74 tests across all backend modules
+└── tests/                           # pytest — 360 tests across all backend modules
 ```
 
 ## Data flow: from slider to subprocess

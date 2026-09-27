@@ -83,12 +83,20 @@ does not install it automatically.
 For vLLM 0.30 the attention selector is **`B12X`**, despite earlier release
 discussion using `B12X_ATTN`. It requires BF16 (16-bit brain floating point)
 model computation and compatible conversation memory, and cannot split context
-processing across GPUs. B12X MoE also has model-format restrictions and cannot
-use expert parallelism (splitting experts among separate workers).
+processing across GPUs. A model stored in float32 qualifies when precision is
+left on automatic, because vLLM runs it as BF16 on these GPUs. B12X MoE also
+has model-format restrictions and cannot use expert parallelism (splitting
+experts among separate workers).
 
 Native checks inspect the selected executable, not the launcher's Python.
 Unavailable checks are shown as unverified; Docker runtime/package support is
-always unverified here. Package presence and recognized flags do not guarantee
+always unverified here. The first check of a vLLM installation can take up to
+a minute while vLLM loads its libraries: the Launch page shows "still being
+checked" in the meantime, and **Launch** waits for the answer. Results are
+reused for 10 minutes and rechecked as soon as you install or upgrade packages
+in that environment. Options typed in **Extra arguments** are checked the way
+vLLM reads them, including underscore spellings such as `--linear_backend`.
+Package presence and recognized flags do not guarantee
 a model will run or be faster. Compare performance on your own GPU before
 keeping an override. See the [versioned B12X documentation](https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/b12x.md).
 
@@ -135,7 +143,9 @@ To stop the app, go back to the terminal window and press `Ctrl+C`.
 2. **Models** — search for a model on HuggingFace (the most popular library of
    AI models) and download it, or see what you've already got. Each model
    shows whether it'll **Fit**, be **Tight**, or **Won't fit** on your
-   hardware.
+   hardware. When a model ships the same weights in several formats, only the
+   copy vLLM loads (safetensors, not older `.bin` files) is downloaded and
+   counted.
    ![Models screenshot](docs/images/models.png)
 3. **Launch** — pick a model, pick a preset (or leave it on *Safe*), and read
    the big green/yellow/red verdict at the top. Every setting below it has a
@@ -155,6 +165,21 @@ To stop the app, go back to the terminal window and press `Ctrl+C`.
    automatically.
 
 ## Advanced hardware controls
+
+### Choosing GPUs for vLLM
+
+**Which GPUs to use** takes the GPU numbers shown by `nvidia-smi`, separated by
+commas: `0,1` for both of two cards, `1` for just the second. Entries such as
+`0 1` (a space instead of a comma) are refused with an explanation rather than
+silently misread. For native vLLM the launcher sets
+`CUDA_DEVICE_ORDER=PCI_BUS_ID`, so the numbers always match `nvidia-smi`. That
+includes a `CUDA_VISIBLE_DEVICES` you set before starting the launcher, which
+CUDA would otherwise number fastest card first. The memory advice budgets the
+GPUs selected here, or those in `CUDA_VISIBLE_DEVICES` when this is empty. If
+you add vLLM's own `--device-ids` under **Extra arguments**, it picks positions
+within the GPUs selected here.
+
+### llama.cpp placement
 
 For llama.cpp, the advanced launch settings include:
 
@@ -212,8 +237,11 @@ launches. Running servers keep their existing executable, and older copies are
 retained. You can restore an older executable path in Settings.
 
 Use a browser directly on the launcher computer for these update controls.
-An interrupted build leaves the previous engine selected; its partial files
-may remain in the app data directory. The launcher must stay open to finish a
+A failed build keeps the previous engine selected, removes its downloaded
+source and build environment to free disk space, and keeps its log. An
+interrupted build (for example, if the launcher is closed) also leaves the
+previous engine selected, but its partial files may remain in the app data
+directory. The launcher must stay open to finish a
 build and select its result.
 
 ## What "Fit / Tight / Won't fit" means

@@ -3,59 +3,135 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
-## Unreleased — vLLM backend controls, September 2026
+## 2026-09-27 — v0.4.0
 
-### Added
+Engine updates from source, multi-GPU and memory placement for llama.cpp, and
+vLLM backend controls for consumer Blackwell GPUs, plus the fixes found while
+reviewing them. Merged via PRs #17 and #18.
 
-- Advanced vLLM linear, MoE and attention backend selectors, including
-  FlashInfer options and optional B12X kernels for SM120/SM121 GPUs such as the
-  RTX 5060 Ti. Automatic stays the default and adds no flags. Advice and launch
-  reject known incompatible combinations and check the selected runtime's
-  supported flags and the optional `b12x` package.
+### Added: build an engine from source (issue #11)
 
-### Fixed
+- **Settings → Build current engine source** builds official llama.cpp
+  (CPU or CUDA) or native vLLM (NVIDIA CUDA) on Linux, in separate folders
+  under the app data directory. It shows prerequisites, the exact source
+  revision, progress, and logs, and nothing is downloaded or upgraded until you
+  choose to build.
+- Only a validated executable is selected for future launches. A failed build
+  keeps the previous executable, running servers keep theirs, and older copies
+  stay available so you can restore an earlier executable path.
 
-- Launch validation runs before the server registry lock, so a slow runtime
-  check never freezes server status, logs or Stop; advice never waits for it.
-- GPU lists are normalized once and used everywhere; lists such as `0 1` are
-  rejected, `0` means GPU 0, and native launches number GPUs as nvidia-smi does.
-- A freshly built vLLM gets 300 seconds for its first `--version` check.
-- Downloads skip `.bin` copies of weights a repo also ships as safetensors, and
-  installed-model size counts only the files vLLM loads.
+### Added: multi-GPU and memory placement for llama.cpp (issues #13, #15)
 
-## Unreleased — open issue pass, September 2026
+- **GPU selection and proportions:** device selection, proportional
+  `--tensor-split`, main-GPU selection, and the `layer`, `row`, and
+  experimental `tensor` split modes, each with compatibility checks.
+- **MoE expert placement in RAM** (`--cpu-moe`, `--n-cpu-moe`) and
+  **microbatch size** (`--ubatch-size`).
+- **NUMA:** optional llama.cpp thread placement, and an **Interleave memory**
+  option that runs native llama.cpp or vLLM under `numactl --interleave=all`.
+- The memory-mapping and RAM-lock controls are translated to `--load-mode` on
+  newer llama.cpp binaries that dropped the old flags.
 
-### Added
+### Added: vLLM backend controls for consumer Blackwell GPUs
 
-- Explicit, isolated source builds for official llama.cpp and native vLLM on
-  supported Linux systems. Settings shows prerequisites, exact source revision,
-  progress, and logs. Failed builds preserve the previous executable; running
-  servers are unaffected.
-- llama.cpp device selection, proportional GPU splitting, main-GPU selection,
-  and experimental tensor split mode with compatibility checks.
-- MoE expert placement in RAM (`--cpu-moe`, `--n-cpu-moe`), microbatch size,
-  and optional NUMA thread placement. Native engines can optionally run under
-  `numactl --interleave=all` for memory distribution across allowed nodes.
-- Compatibility translation for legacy memory-loading controls on newer
-  llama.cpp binaries that use `--load-mode`.
+- **Linear, MoE (mixture-of-experts), and attention backend selectors** under
+  Advanced, including FlashInfer options and the optional B12X kernels for
+  SM120/SM121 GPUs such as the RTX 5060 Ti. **Automatic** stays the default
+  and adds no flags.
+- The launcher checks the **selected runtime itself**, not its own Python: the
+  flags and choices that vLLM executable accepts, and whether the optional
+  `b12x` package is installed next to it. Docker images cannot be inspected,
+  so their support is shown as unverified.
+- Known conflicts are rejected before launch with a plain explanation: B12X
+  on a GPU that is not SM120/SM121, B12X attention without BF16 computation,
+  with an unsupported conversation-memory (KV cache) format, with context
+  parallelism, or on MLA (latent attention) models, and B12X MoE with expert
+  parallelism or with a quantization format known to be incompatible (it needs
+  NVFP4 or MXFP4 expert weights).
+- A float32 model with **automatic** precision qualifies for B12X attention,
+  because vLLM runs float32 checkpoints as BF16 on these GPUs; the advice notes
+  that embedding models run as float16 instead.
+- vLLM 0.30's attention backend is named **`B12X`**. Typing `B12X_ATTN`, the
+  name used in release discussion, gets a direct correction.
+- Anything typed in **Extra arguments** is read the way vLLM reads it:
+  underscore spellings such as `--linear_backend`, backend values in any case
+  or with dashes (`B12X`, `flashinfer-b12x`), and vLLM's own `--device-ids`.
 
-### Fixed
+### Changed: behavior worth knowing about
 
-- Default-on vLLM prefix caching and chunked prefill can be explicitly disabled.
-- Saved Hugging Face tokens can be preserved, replaced, and cleared without
-  accidentally saving their display mask.
-- Tests isolate application state before importing the API.
-- Settings are written atomically with private permissions; unknown API routes
-  return JSON errors, and malformed upstream chat responses return a gateway
-  error.
-- Failed launches retain logs; concurrent launches reserve their ports, and
-  download concurrency limits are synchronized.
-- Download progress counts only requested files; completed jobs trigger one
-  model scan instead of repeated scans.
-- Breadcrumb text, used VRAM display, live hardware polling, and Refresh
-  busy/success/error feedback now match the actual state.
-- Source-build llama.cpp discovery has its documented priority. Duplicate
-  changelog content and unused code were removed.
+- **GPU numbers always mean what `nvidia-smi` shows.** Native vLLM launches now
+  set `CUDA_DEVICE_ORDER=PCI_BUS_ID`. This includes a `CUDA_VISIBLE_DEVICES`
+  set before starting the launcher, which CUDA would otherwise number
+  fastest-card-first.
+- **"Which GPUs to use" must be a comma-separated list** of distinct GPU
+  numbers (or CUDA GPU IDs). Entries such as `0 1` or `gpu1`, which the engine
+  would silently misread, are now refused with an explanation.
+- **Downloads skip duplicate weight files.** When a model ships its weights as
+  safetensors and also as older `.bin`/`.pt` files, only the safetensors copy
+  vLLM actually loads is downloaded.
+- **Installed-model sizes count only the files vLLM loads,** so models that
+  ship the same weights several times now show their real size (for example
+  `sentence-transformers/all-MiniLM-L6-v2` went from 0.27 GB to 0.08 GB). The
+  Fit / Tight / Won't fit verdicts use the corrected size.
+- **vLLM memory advice budgets only the GPUs the server will see,** including
+  a `CUDA_VISIBLE_DEVICES` inherited from the launcher's environment.
+
+### Fixed: settings, launches, and the dashboard (issues #7, #8, #9, #10, #16)
+
+- Default-on vLLM prefix caching and chunked prefill can now be explicitly
+  turned off (#7).
+- A saved Hugging Face token can be kept, replaced, or cleared, and its
+  on-screen mask is never saved in its place (#8).
+- Running the tests no longer touches your real settings folder (#9).
+- Settings are written atomically with private file permissions. Unknown API
+  routes return JSON errors, and a malformed reply from a model server returns
+  a clear gateway error (#10).
+- Failed launches keep their logs, concurrent launches no longer grab the same
+  port, and the download limit holds when downloads start at the same time
+  (#10).
+- Download progress counts only the files requested, and a finished download
+  triggers one model scan instead of repeated scans (#10).
+- The breadcrumb, used-VRAM display, live hardware updates, and the Refresh
+  button's busy/success/error feedback now match reality (#10, #16).
+- Hardware and server-list refreshes no longer pile up overlapping requests.
+- Stopping a server no longer freezes status, logs, or other servers while it
+  shuts down.
+- The llama.cpp memory estimate counts a full-precision (F32) conversation
+  memory cache at twice the size of F16; it was counted as F16.
+- A llama.cpp you compiled yourself in its usual folder (for example
+  `~/llama.cpp/build`) is preferred over a generic `llama-server` on your PATH,
+  which is often CPU-only, as the documentation describes. Duplicate changelog
+  content and unused code were removed.
+
+### Fixed: engine source builds
+
+- A failed build removes its downloaded source and build environment to free
+  disk space, keeps its log for diagnosis, and never removes the executable
+  currently selected.
+- An engine path you restored by hand in Settings is no longer overwritten by
+  an older completed build when you reopen Settings.
+- A freshly built vLLM gets up to 300 seconds (was 30) for its first
+  `--version` check, which loads its libraries from a cold start; a healthy
+  build is no longer marked failed.
+
+### Fixed: vLLM backend checks stay fast and accurate
+
+- Launch checks now run **before** the server list is locked, so a slow runtime
+  check never freezes status, logs, or Stop.
+- The Launch page's advice never waits on a runtime check. It shows the last
+  result, or "still being checked", and refreshes in the background.
+- Each vLLM installation is checked by one process at a time, and callers that
+  arrive meanwhile share its answer. The help check gets 60 seconds (was 8) to
+  allow vLLM's normal start-up time.
+- Check results are reused for 10 minutes, and are dropped as soon as the vLLM
+  executable, its Python, or its installed packages change, so an open Launch
+  page no longer re-runs the heavy check every minute.
+- If the background check cannot start, advice shows the result as unknown and
+  retries on the next refresh instead of failing.
+- `device_ids = 0` means GPU 0 (it was treated as "all GPUs" for Docker and
+  ignored by the GPU check).
+
+Tests: 360 passing.
 
 ## 2026-08-11 — v0.3.1
 
