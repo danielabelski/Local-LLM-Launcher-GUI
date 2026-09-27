@@ -381,6 +381,38 @@ def test_kv_cache_from_config_is_sane():
     assert 0.9 < gb < 1.1  # 32 layers * 8 kv heads * 128 dim * 2 * 2B * 8192 = 1.0 GB
 
 
+def test_llamacpp_cache_precision_accounts_for_k_and_v_independently():
+    model = gguf_model()
+    model["config"] = {"num_hidden_layers": 32, "hidden_size": 4096,
+                       "num_attention_heads": 32, "num_key_value_heads": 8}
+    for k_type, v_type, expected_gb in (
+        ("f16", "bf16", 1.0),
+        ("f32", "bf16", 1.5),
+        ("bf16", "f32", 1.5),
+        ("f32", "f32", 2.0),
+    ):
+        result = advisor.advise("llamacpp", model, {
+            "ctx_size": 8192, "cache_type_k": k_type, "cache_type_v": v_type,
+        }, CPU_ONLY)
+        assert result["budget"]["kv_cache_gb"] == expected_gb, (k_type, v_type)
+
+
+def test_llamacpp_f32_cache_changes_fit_when_memory_is_insufficient():
+    model = gguf_model(size_gb=5.0)
+    model["config"] = {"num_hidden_layers": 32, "hidden_size": 4096,
+                       "num_attention_heads": 32, "num_key_value_heads": 8}
+    half = advisor.advise("llamacpp", model, {
+        "ctx_size": 32768, "cache_type_k": "f16", "cache_type_v": "bf16",
+    }, CPU_ONLY)
+    full = advisor.advise("llamacpp", model, {
+        "ctx_size": 32768, "cache_type_k": "f32", "cache_type_v": "f32",
+    }, CPU_ONLY)
+    assert half["budget"]["needed_gb"] < half["budget"]["available_gb"]
+    assert half["overall"]["level"] != "red"
+    assert full["budget"]["needed_gb"] > full["budget"]["available_gb"]
+    assert full["overall"]["level"] == "red"
+
+
 # ---------- --no-kv-offload (KV cache to system RAM) ----------
 
 def test_no_kv_offload_red_flag():

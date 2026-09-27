@@ -353,7 +353,7 @@ def _advise_llamacpp(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, A
     weights_gb = model["size_bytes"] / GB
 
     kv_gb_f16 = estimate_kv_gb(model.get("config") or {}, model.get("param_count_b"), ctx, seqs=1)
-    mult = {"f16": 1.0, "q8_0": 0.5, "q4_0": 0.25}
+    mult = {"f16": 1.0, "bf16": 1.0, "f32": 2.0, "q8_0": 0.5, "q4_0": 0.25}
     k_mult = mult.get(str(cfg.get("cache_type_k", "f16")), 1.0)
     v_mult = mult.get(str(cfg.get("cache_type_v", "f16")), 1.0)
     kv_gb = kv_gb_f16 * (k_mult + v_mult) / 2
