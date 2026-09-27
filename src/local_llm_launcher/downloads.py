@@ -119,9 +119,9 @@ class DownloadManager:
         if filename:
             files = [f for f in detail["files"] if f["filename"] == filename]
         else:
-            names = set(filter_repo_objects(
-                (f["filename"] for f in detail["files"]), ignore_patterns=_SNAPSHOT_IGNORE))
-            files = [f for f in detail["files"] if f["filename"] in names]
+            files = list(filter_repo_objects(
+                detail["files"], ignore_patterns=_SNAPSHOT_IGNORE,
+                key=lambda item: item["filename"]))
 
         targets = [(f.get("cache_key"), f["size_bytes"]) for f in files]
         job = DownloadJob(repo_id, filename, sum(size for _, size in targets), targets)

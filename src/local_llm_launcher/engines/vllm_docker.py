@@ -11,7 +11,7 @@ import uuid
 from typing import Any, Dict
 
 from ._args import build_args_and_env
-from .placement import validate, wrap
+from .placement import validate
 
 IMAGE = "vllm/vllm-openai:latest"
 HF_CACHE = os.path.expanduser("~/.cache/huggingface")

@@ -103,13 +103,13 @@ class ServerManager:
                 container_name=spec.get("container_name"),
                 env_file=spec.get("env_file"),
             )
-            if not srv.start():
+            started = srv.start()
+            if not started:
                 srv._cleanup_env_file()
-                self.servers[srv.server_id] = srv
-                self._save()
-                raise RuntimeError("The server process failed to start. Check the logs for details.")
             self.servers[srv.server_id] = srv
             self._save()
+            if not started:
+                raise RuntimeError("The server process failed to start. Check the logs for details.")
         return srv
 
     # ------------------------------------------------------------------ queries
