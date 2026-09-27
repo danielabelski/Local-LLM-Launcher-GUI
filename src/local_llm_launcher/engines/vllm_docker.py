@@ -47,6 +47,11 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         "-v", f"{HF_CACHE}:/root/.cache/huggingface",
         "--ipc=host",
     ]
+    # Some NVIDIA Container Toolkit setups expose UVM in the container but do
+    # not grant access to its device cgroup. CUDA then fails with error 999 even
+    # though nvidia-smi can see the GPU. An explicit mapping grants that access.
+    if os.path.exists("/dev/nvidia-uvm"):
+        argv.append("--device=/dev/nvidia-uvm")
 
     # Pass secrets via --env-file instead of -e to avoid exposing them in ps output.
     env_file = None
