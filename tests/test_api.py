@@ -167,6 +167,20 @@ def test_stop_unknown_server_is_404(client):
     assert r.status_code == 404
 
 
+def test_remove_failure_retains_server_and_reports_conflict(client, monkeypatch):
+    import local_llm_launcher.api as api
+
+    monkeypatch.setattr(api.servers, "get", lambda server_id: object())
+    monkeypatch.setattr(api.servers, "remove", lambda server_id: False)
+    response = client.delete("/api/servers/known")
+    assert response.status_code == 409
+    assert "retained" in response.json()["detail"]
+
+
+def test_remove_unknown_server_is_404(client):
+    assert client.delete("/api/servers/no-such-id").status_code == 404
+
+
 def test_stop_failure_is_not_404(client, monkeypatch):
     import local_llm_launcher.api as api
 

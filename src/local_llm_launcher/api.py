@@ -286,6 +286,8 @@ def api_server_stop(server_id: str):
 @router.delete("/servers/{server_id}")
 def api_server_remove(server_id: str):
     if not servers.remove(server_id):
+        if servers.get(server_id) is not None:
+            raise HTTPException(409, "The server didn't stop; its record and logs were retained. Check its log for errors.")
         raise HTTPException(404, "No such server.")
     return {"ok": True}
 

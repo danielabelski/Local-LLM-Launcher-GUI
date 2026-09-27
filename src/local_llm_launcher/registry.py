@@ -41,6 +41,8 @@ class ServerManager:
         self.state_file = self.app_dir / "servers.json"
         self.app_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._lifecycle_locks: Dict[str, threading.Lock] = {}
+        self._stopping: set[str] = set()
         self.servers: Dict[str, LocalServer] = {}
         self._reload()
 
@@ -88,7 +90,8 @@ class ServerManager:
             config = dict(config)
             default_port = catalog.defaults("llamacpp")["port"] if engine_mode == "llamacpp" \
                 else catalog.defaults("vllm")["port"]
-            reserved = {s.port for s in self.servers.values() if s.is_running()}
+            reserved = {s.port for s in self.servers.values()
+                        if s.server_id in self._stopping or s.is_running()}
             config["port"] = find_free_port(int(config.get("port", default_port)),
                                             reserved=reserved)
             spec = self.build_spec(engine_mode, model, config, llamacpp_binary, vllm_binary)
@@ -122,30 +125,46 @@ class ServerManager:
         with self._lock:
             return self.servers.get(server_id)
 
-    def stop(self, server_id: str) -> bool:
+    def _shutdown(self, server_id: str, *, remove: bool = False) -> bool:
         with self._lock:
             srv = self.servers.get(server_id)
             if not srv:
                 return False
-            ok = srv.stop()
-            self._save()
-            return ok
+            lifecycle_lock = self._lifecycle_locks.setdefault(server_id, threading.Lock())
+
+        # Waiting for a process (or another shutdown of this server) must not
+        # block queries, launches, or lifecycle operations on other servers.
+        with lifecycle_lock:
+            with self._lock:
+                if self.servers.get(server_id) is not srv:
+                    return False  # a preceding remove already finished
+                self._stopping.add(server_id)
+            try:
+                if remove and not srv.is_running():
+                    srv._cleanup_env_file()
+                    ok = True
+                else:
+                    ok = srv.stop()
+                if remove:
+                    ok = ok and not srv.is_running()
+                    if ok:
+                        with self._lock:
+                            del self.servers[server_id]
+                            del self._lifecycle_locks[server_id]
+                return ok
+            finally:
+                with self._lock:
+                    self._stopping.discard(server_id)
+                    self._save()
+
+    def stop(self, server_id: str) -> bool:
+        return self._shutdown(server_id)
 
     def remove(self, server_id: str) -> bool:
-        with self._lock:
-            srv = self.servers.pop(server_id, None)
-            if not srv:
-                return False
-            if srv.is_running():
-                srv.stop()
-            else:
-                srv._cleanup_env_file()  # server already dead — still delete its env file
-            self._save()
-            return True
+        return self._shutdown(server_id, remove=True)
 
     def stop_all(self) -> None:
         with self._lock:
-            for srv in self.servers.values():
-                if srv.is_running():
-                    srv.stop()
-            self._save()
+            server_ids = list(self.servers)
+        for server_id in server_ids:
+            self.stop(server_id)

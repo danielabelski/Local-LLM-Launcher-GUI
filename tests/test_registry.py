@@ -169,3 +169,121 @@ def test_concurrent_saves_do_not_share_temporary_file(tmp_path, monkeypatch):
             release_first.set()
         first.result(timeout=5)
         second.result(timeout=5)
+
+
+def _registered_server(mgr, monkeypatch):
+    from local_llm_launcher.engines.base import LocalServer
+
+    srv = LocalServer(server_id="blocked", engine="llamacpp", model_label="test",
+                      port=45129, argv=[], env={}, log_dir=mgr.log_dir)
+    monkeypatch.setattr(srv, "is_running", lambda: True)
+    mgr.servers[srv.server_id] = srv
+    return srv
+
+
+@pytest.mark.parametrize("operation", ["stop", "remove", "stop_all"])
+def test_shutdown_leaves_queries_and_launch_responsive(tmp_path, monkeypatch, operation):
+    mgr = ServerManager(app_dir=tmp_path)
+    srv = _registered_server(mgr, monkeypatch)
+    stopping, release = Event(), Event()
+
+    def blocked_stop():
+        # The process can exit before Docker/environment cleanup finishes.
+        monkeypatch.setattr(srv, "is_running", lambda: False)
+        stopping.set()
+        assert release.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr(srv, "stop", blocked_stop)
+    monkeypatch.setattr("local_llm_launcher.registry.port_in_use", lambda _port: False)
+    monkeypatch.setattr("local_llm_launcher.registry.LocalServer.start", lambda self: True)
+    monkeypatch.setattr(mgr, "build_spec", lambda _mode, _model, config, *args: {
+        "argv": [], "env": {}, "port": config["port"],
+    })
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        shutdown = pool.submit(getattr(mgr, operation), *(() if operation == "stop_all" else (srv.server_id,)))
+        try:
+            assert stopping.wait(timeout=2)
+            def query_and_launch():
+                assert mgr.get(srv.server_id) is srv
+                assert mgr.list()[0]["id"] == srv.server_id
+                return mgr.launch("llamacpp", GGUF, {"port": srv.port})
+            launched = pool.submit(query_and_launch).result(timeout=1)
+            assert launched.port == srv.port + 1
+        finally:
+            release.set()
+        shutdown.result(timeout=2)
+
+
+def test_stop_and_remove_are_serialized_per_server(tmp_path, monkeypatch):
+    mgr = ServerManager(app_dir=tmp_path)
+    srv = _registered_server(mgr, monkeypatch)
+    entered, release, second_entered = Event(), Event(), Event()
+    calls = 0
+
+    def blocked_stop():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            assert release.wait(timeout=5)
+        else:
+            second_entered.set()
+        return False
+
+    monkeypatch.setattr(srv, "stop", blocked_stop)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        stopped = pool.submit(mgr.stop, srv.server_id)
+        try:
+            assert entered.wait(timeout=2)
+            removed = pool.submit(mgr.remove, srv.server_id)
+            assert not second_entered.wait(timeout=0.2)
+        finally:
+            release.set()
+        assert stopped.result(timeout=2) is False
+        assert removed.result(timeout=2) is False
+    assert calls == 2
+    assert mgr.get(srv.server_id) is srv
+    assert ServerManager(app_dir=tmp_path).get(srv.server_id) is not None
+
+
+def test_successful_remove_does_not_repeat_shutdown(tmp_path, monkeypatch):
+    mgr = ServerManager(app_dir=tmp_path)
+    srv = _registered_server(mgr, monkeypatch)
+    entered, release = Event(), Event()
+    calls = 0
+
+    def blocked_stop():
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        monkeypatch.setattr(srv, "is_running", lambda: False)
+        return True
+
+    monkeypatch.setattr(srv, "stop", blocked_stop)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        removed = pool.submit(mgr.remove, srv.server_id)
+        try:
+            assert entered.wait(timeout=2)
+            stopped = pool.submit(mgr.stop, srv.server_id)
+        finally:
+            release.set()
+        assert removed.result(timeout=2) is True
+        assert stopped.result(timeout=2) is False
+    assert calls == 1
+    assert mgr.get(srv.server_id) is None
+
+
+def test_remove_keeps_record_when_stop_raises(tmp_path, monkeypatch):
+    mgr = ServerManager(app_dir=tmp_path)
+    srv = _registered_server(mgr, monkeypatch)
+
+    def failed_stop():
+        raise OSError("shutdown failed")
+
+    monkeypatch.setattr(srv, "stop", failed_stop)
+    with pytest.raises(OSError, match="shutdown failed"):
+        mgr.remove(srv.server_id)
+    assert mgr.get(srv.server_id) is srv
+    assert ServerManager(app_dir=tmp_path).get(srv.server_id) is not None
