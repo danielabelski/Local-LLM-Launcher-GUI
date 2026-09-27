@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 
 const LLAMA_INSTALL = {
@@ -26,37 +26,63 @@ export default function Settings({ hardware, notify }) {
   const [lanAccess, setLanAccess] = useState(false)
   const [about, setAbout] = useState(null)
   const [saving, setSaving] = useState(false)
+  const updateGeneration = useRef(0)
+  const startingUpdate = useRef(false)
+  const observedBuild = useRef(null)
+  const pathEdits = useRef({ llamacpp: 0, vllm: 0 })
 
   useEffect(() => {
     api.settings().then((s) => {
       setSettings(s)
       setFolders((s.gguf_folders ?? []).join('\n'))
-      setLlamaPath(s.llamacpp_path ?? '')
-      setVllmPath(s.vllm_path ?? '')
+      if (!pathEdits.current.llamacpp) setLlamaPath(s.llamacpp_path ?? '')
+      if (!pathEdits.current.vllm) setVllmPath(s.vllm_path ?? '')
       setLanAccess(!!s.lan_access)
     }).catch(() => setSettings({}))
     api.about().then(setAbout).catch(() => setAbout(null))
   }, [])
 
+  const acceptStatus = (status, edits) => {
+    if (status.state === 'running' && observedBuild.current?.path !== status.path) {
+      observedBuild.current = { path: status.path, engine: status.engine, edits: edits[status.engine] }
+    } else if (status.state === 'complete') {
+      const observed = observedBuild.current
+      // Historical completed jobs must not undo a saved rollback on remount.
+      // An edit made while this build ran also takes precedence in the form.
+      if (observed && observed.path === status.path && observed.engine === status.engine
+        && observed.edits === pathEdits.current[status.engine]) {
+        pathEdits.current[status.engine]++
+        if (status.engine === 'llamacpp') setLlamaPath(status.executable)
+        else setVllmPath(status.executable)
+      }
+      observedBuild.current = null
+    } else if (status.state !== 'running') {
+      observedBuild.current = null
+    }
+    setJob(status)
+  }
+
   useEffect(() => {
     // Status is local only. Upstream checks and builds require a button click.
     let cancelled = false
+    let timer
     const poll = async () => {
+      const generation = updateGeneration.current
+      const edits = { ...pathEdits.current }
       try {
+        if (startingUpdate.current) return
         const status = await api.updateStatus()
-        if (!cancelled) setJob(status)
+        if (!cancelled && generation === updateGeneration.current) acceptStatus(status, edits)
       } catch { /* LAN viewers cannot use the local updater. Check explains why. */ }
+      finally {
+        // Schedule only after the previous request finishes, avoiding old replies
+        // replacing newer status. A POST also invalidates pre-start requests.
+        if (!cancelled) timer = setTimeout(poll, 2000)
+      }
     }
     poll()
-    const timer = setInterval(poll, 2000)
-    return () => { cancelled = true; clearInterval(timer) }
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [])
-
-  useEffect(() => {
-    if (job?.state !== 'complete') return
-    if (job.engine === 'llamacpp') setLlamaPath(job.executable)
-    else setVllmPath(job.executable)
-  }, [job?.state, job?.executable, job?.engine])
 
   const checkUpdate = async (engine) => {
     setChecking(engine)
@@ -69,11 +95,14 @@ export default function Settings({ hardware, notify }) {
   }
 
   const startUpdate = async (check) => {
+    updateGeneration.current++
+    startingUpdate.current = true
+    const edits = { ...pathEdits.current }
     setChecking(check.engine)
     setUpdateError('')
-    try { setJob(await api.startUpdate(check.check_id)) }
+    try { acceptStatus(await api.startUpdate(check.check_id), edits) }
     catch (err) { setUpdateError(err.message) }
-    finally { setChecking(null) }
+    finally { startingUpdate.current = false; setChecking(null) }
   }
 
   const save = async (e) => {
@@ -154,7 +183,7 @@ export default function Settings({ hardware, notify }) {
                 ? <>Found at <code className="mono">{hardware.engines.llamacpp_path}</code>. Set a path here only to use a different copy.</>
                 : 'llama-server was not found automatically. If you installed it somewhere unusual, give the full path here.'}
             </p>
-            <input value={llamaPath} onChange={(e) => setLlamaPath(e.target.value)}
+            <input value={llamaPath} onChange={(e) => { pathEdits.current.llamacpp++; setLlamaPath(e.target.value) }}
               placeholder="/path/to/llama-server"
               style={{ width: '100%', maxWidth: 560, fontFamily: 'var(--font-mono)', fontSize: 12.5 }} />
           </div>
@@ -162,7 +191,7 @@ export default function Settings({ hardware, notify }) {
           <div>
             <h3>Native vLLM location</h3>
             <p className="small muted">Optional path to the vllm executable. Managed source builds fill this in; Docker launches use their existing image.</p>
-            <input aria-label="Native vLLM location" value={vllmPath} onChange={(e) => setVllmPath(e.target.value)}
+            <input aria-label="Native vLLM location" value={vllmPath} onChange={(e) => { pathEdits.current.vllm++; setVllmPath(e.target.value) }}
               placeholder="/path/to/venv/bin/vllm" style={{ width: '100%', maxWidth: 560 }} />
           </div>
 

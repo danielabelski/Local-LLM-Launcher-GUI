@@ -34,8 +34,16 @@ try {
       if (path === '/api/servers' && options?.method === 'POST') { launches++; throw new Error('Never start a real engine in a browser check'); }
       return original(path, options);
     };
-    [...document.querySelectorAll('button')].find(b=>b.textContent==='Refresh').click();
-    await wait(500);
+    const refresh = [...document.querySelectorAll('button')].find(b=>b.textContent==='Refresh');
+    // The first click may share the initial, already-running hardware request.
+    // Wait for it, then request the synthetic topology through our interceptor.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      refresh.click();
+      await wait(50);
+      const deadline = Date.now() + 10000;
+      while (refresh.disabled && Date.now() < deadline) await wait(25);
+      check(!refresh.disabled, 'Hardware refresh timed out');
+    }
     [...document.querySelectorAll('nav button')].find(b=>b.textContent.endsWith('Launch')).click();
     await wait(700);
     check(document.body.innerText.includes('2 allowed node(s)'), 'Two-node topology missing');
