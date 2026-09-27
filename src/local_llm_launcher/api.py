@@ -191,6 +191,7 @@ def api_catalog(engine: str):
 
 class AdviseRequest(BaseModel):
     engine: str  # "vllm" | "llamacpp"
+    engine_mode: Optional[str] = None
     repo_id: str
     config: Dict[str, Any] = {}
 
@@ -199,7 +200,10 @@ class AdviseRequest(BaseModel):
 def api_advise(body: AdviseRequest):
     model = find_model(body.repo_id)
     try:
-        return advisor.advise(body.engine, model, body.config, get_hardware())
+        from .engines.placement import validate
+        hw = get_hardware()
+        validate(body.engine_mode or body.engine, body.config, hw.get("numa"))
+        return advisor.advise(body.engine, model, body.config, hw)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -231,7 +235,7 @@ def api_launch(body: LaunchRequest):
         srv = servers.launch(body.engine_mode, model, config,
                              llamacpp_binary=hw["engines"].get("llamacpp_path"),
                              vllm_binary=settings.data.get("vllm_path"))
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
         raise HTTPException(400, str(e))
     return srv.status()
 

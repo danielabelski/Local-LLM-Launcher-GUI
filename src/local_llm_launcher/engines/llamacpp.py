@@ -5,6 +5,8 @@ import os
 from typing import Any, Dict
 
 from ._args import build_args_and_env
+from .placement import validate, wrap
+from .. import hardware
 
 
 def _pick_gguf_path(model: Dict[str, Any], config: Dict[str, Any]) -> str:
@@ -20,7 +22,12 @@ def _pick_gguf_path(model: Dict[str, Any], config: Dict[str, Any]) -> str:
 
 
 def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "llama-server") -> Dict[str, Any]:
+    validate('llamacpp', config)
     cfg = {k: v for k, v in config.items() if k != "gguf_file"}
+    loading = []
+    if (cfg.get("no_mmap") or cfg.get("mlock")) and hardware.llama_capabilities(binary)["load_mode"]:
+        no_mmap, mlock = cfg.pop("no_mmap", False), cfg.pop("mlock", False)
+        loading = ["--load-mode", "mlock" if no_mmap and mlock else "none" if no_mmap else "mmap+mlock"]
     flags, env, extra = build_args_and_env("llamacpp", cfg)
     port = int(config.get("port", 8080))
     host = config.get("host", "127.0.0.1")
@@ -33,9 +40,9 @@ def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "llama-se
     argv = [binary, "-m", _pick_gguf_path(model, config)]
     if host:
         argv.extend(["--host", host])
-    argv += flags + extra
+    argv += flags + loading + extra
     return {
-        "argv": argv,
+        "argv": wrap(argv, config),
         "env": env,
         "port": port,
         "health_url": f"http://127.0.0.1:{port}/health",

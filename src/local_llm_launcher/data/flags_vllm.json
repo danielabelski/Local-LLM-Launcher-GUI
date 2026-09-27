@@ -224,6 +224,16 @@
       "env_var": "HF_TOKEN"
     },
     {
+      "key": "numactl_interleave",
+      "flag": null,
+      "label": "Interleave memory across NUMA nodes",
+      "type": "bool",
+      "default": false,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Linux native engines only. Runs numactl --interleave=all to spread memory allocations across allowed nodes. This changes memory placement, not CPU affinity (where threads run). Benchmark on multi-node machines; no cross-node benefit with one node."
+    },
+    {
       "key": "extra_args",
       "flag": null,
       "label": "Extra raw flags",

@@ -28,8 +28,8 @@ export const api = {
     request('/api/downloads', { method: 'POST', body: JSON.stringify({ repo_id: repoId, filename }) }),
   downloads: () => request('/api/downloads'),
   catalog: (engine) => request(`/api/catalog/${engine}`),
-  advise: (engine, repoId, config) =>
-    request('/api/advise', { method: 'POST', body: JSON.stringify({ engine, repo_id: repoId, config }) }),
+  advise: (engine, repoId, config, engineMode) =>
+    request('/api/advise', { method: 'POST', body: JSON.stringify({ engine, repo_id: repoId, config, engine_mode: engineMode }) }),
   presets: (engine, repoId) =>
     request(`/api/presets?engine=${engine}&repo_id=${encodeURIComponent(repoId)}`),
   launch: (engineMode, repoId, config) =>
