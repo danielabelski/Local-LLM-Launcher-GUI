@@ -15,6 +15,7 @@ brew install llama.cpp`,
 export default function Settings({ hardware, notify }) {
   const [settings, setSettings] = useState(null)
   const [token, setToken] = useState('')
+  const [clearToken, setClearToken] = useState(false)
   const [folders, setFolders] = useState('')
   const [llamaPath, setLlamaPath] = useState('')
   const [lanAccess, setLanAccess] = useState(false)
@@ -24,7 +25,6 @@ export default function Settings({ hardware, notify }) {
   useEffect(() => {
     api.settings().then((s) => {
       setSettings(s)
-      setToken(s.hf_token ?? '')
       setFolders((s.gguf_folders ?? []).join('\n'))
       setLlamaPath(s.llamacpp_path ?? '')
       setLanAccess(!!s.lan_access)
@@ -37,13 +37,14 @@ export default function Settings({ hardware, notify }) {
     setSaving(true)
     try {
       const updated = await api.saveSettings({
-        hf_token: token || null,
+        ...(clearToken ? { hf_token: null } : token ? { hf_token: token } : {}),
         gguf_folders: folders.split('\n').map((f) => f.trim()).filter(Boolean),
         llamacpp_path: llamaPath || null,
         lan_access: lanAccess,
       })
       setSettings(updated)
-      setToken(updated.hf_token ?? '')
+      setToken('')
+      setClearToken(false)
       notify('Settings saved.')
     } catch (err) {
       notify(err.message, true)
@@ -77,9 +78,17 @@ export default function Settings({ hardware, notify }) {
               </a>{' '}
               — a "read" token is enough. It is stored only on this computer.
             </p>
-            <input type="password" value={token} onChange={(e) => setToken(e.target.value)}
+            <input type="password" aria-label="Hugging Face access token" value={token}
+              onChange={(e) => { setToken(e.target.value); setClearToken(false) }}
               placeholder={settings?.hf_token_set ? 'Saved (hidden)' : 'hf_…'}
               style={{ width: '100%', maxWidth: 420 }} />
+            {settings?.hf_token_set && (
+              <label className="row small" style={{ marginTop: 8 }}>
+                <input type="checkbox" checked={clearToken}
+                  onChange={(e) => { setClearToken(e.target.checked); setToken('') }} />
+                Remove saved token when saving
+              </label>
+            )}
           </div>
 
           <div>

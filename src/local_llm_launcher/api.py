@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import __version__, advisor, catalog, discovery, failures, hardware
 from .config import Settings
@@ -92,42 +92,20 @@ def api_get_settings():
 
 class SettingsUpdate(BaseModel):
     hf_token: Optional[str] = None
-    gguf_folders: Optional[List[str]] = None
+    gguf_folders: List[str] = Field(default_factory=list)
     llamacpp_path: Optional[str] = None
-    lan_access: Optional[bool] = None
-
-
-_UNSET = object()
-
-
-class SettingsPatch(BaseModel):
-    hf_token: Optional[str] = _UNSET
-    gguf_folders: Optional[List[str]] = _UNSET
-    llamacpp_path: Optional[str] = _UNSET
-    lan_access: Optional[bool] = _UNSET
+    lan_access: bool = False
 
 
 @router.put("/settings")
+@router.patch("/settings")
 def api_put_settings(body: SettingsUpdate):
-    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    changes = body.model_dump(exclude_unset=True)
     if changes.get("hf_token") == "********":
         changes.pop("hf_token")  # masked value bounced back — keep stored token
     settings.update(changes)
-    _hw_cache["data"] = None  # llamacpp_path may have changed
-    return settings.public()
-
-
-@router.patch("/settings")
-def api_patch_settings(body: Dict[str, Any]):
-    changes = {}
-    for key in ("hf_token", "gguf_folders", "llamacpp_path", "lan_access"):
-        if key in body:
-            val = body[key]
-            if key == "hf_token" and val == "********":
-                continue  # masked value bounced back
-            changes[key] = val
-    settings.update(changes)
-    _hw_cache["data"] = None
+    with _hw_lock:
+        _hw_cache["data"] = None  # llamacpp_path may have changed
     return settings.public()
 
 
@@ -327,6 +305,8 @@ def api_chat(server_id: str, body: ChatRequest):
                 "reasoning": msg.get("reasoning_content") or ""}
     except httpx.HTTPError as e:
         raise HTTPException(502, f"The model server didn't answer: {e}")
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise HTTPException(502, "The model server returned an invalid chat response.")
 
 
 # --------------------------------------------------------------- Open WebUI

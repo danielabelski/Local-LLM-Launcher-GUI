@@ -59,6 +59,40 @@ def test_settings_roundtrip_masks_token(client):
     assert "hf_token_set" in r2.json()
 
 
+@pytest.mark.parametrize("method", ["put", "patch"])
+def test_settings_token_preserve_replace_and_clear(client, method):
+    import local_llm_launcher.api as api
+    save = getattr(client, method)
+    assert save("/api/settings", json={"hf_token": "hf_example"}).json()["hf_token"] == "********"
+    save("/api/settings", json={"gguf_folders": []})
+    assert api.settings.data["hf_token"] == "hf_example"
+    save("/api/settings", json={"hf_token": "********"})
+    assert api.settings.data["hf_token"] == "hf_example"
+    assert save("/api/settings", json={"hf_token": None}).json()["hf_token_set"] is False
+    assert api.settings.data["hf_token"] is None
+
+
+def test_settings_patch_validates_types(client):
+    assert client.patch("/api/settings", json={"gguf_folders": "not-a-list"}).status_code == 422
+
+
+def test_unknown_api_is_json_404(client):
+    response = client.get("/api/no-such-endpoint")
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+
+
+@pytest.mark.parametrize("payload", [{}, {"choices": []}, {"choices": [{"message": None}]}])
+def test_chat_malformed_upstream_is_502(client, monkeypatch, payload):
+    import local_llm_launcher.api as api
+    from types import SimpleNamespace
+    monkeypatch.setattr(api.servers, "get", lambda _: SimpleNamespace(
+        is_running=lambda: True, port=8000, model_label="test"))
+    monkeypatch.setattr(api.httpx, "post", lambda *a, **k: SimpleNamespace(
+        raise_for_status=lambda: None, json=lambda: payload))
+    assert client.post("/api/servers/test/chat", json={"messages": []}).status_code == 502
+
+
 def test_settings_roundtrip_lan_access_toggle(client):
     r = client.patch("/api/settings", json={"lan_access": True})
     assert r.status_code == 200
