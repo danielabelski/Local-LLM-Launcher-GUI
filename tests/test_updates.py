@@ -1,3 +1,6 @@
+from pathlib import Path
+import subprocess
+
 import pytest
 from local_llm_launcher.config import Settings
 from local_llm_launcher.updates import UpdateManager
@@ -39,6 +42,7 @@ def test_success_builds_checked_sha_and_activates_only_after_validation(tmp_path
     assert any(SHA in argv and 'fetch' in argv for argv in calls)
     assert calls[-1][-1] == '--version'
     assert settings.data['llamacpp_path'].endswith('/build/bin/llama-server')
+    assert Path(settings.data['llamacpp_path']).is_file()
 
 def test_rejects_unknown_check_and_concurrent_job(tmp_path, monkeypatch):
     manager = UpdateManager(Settings(tmp_path))
@@ -188,3 +192,62 @@ def test_start_rechecks_resources_and_hardware(tmp_path, monkeypatch):
     manager.start(check['check_id'])
     manager.thread.join(2)
     assert seen == [1]
+
+
+@pytest.mark.parametrize('engine,key', [('llamacpp', 'llamacpp_path'), ('vllm', 'vllm_path')])
+def test_failed_build_removes_only_inactive_artifacts_and_retains_log(tmp_path, monkeypatch, engine, key):
+    previous = tmp_path / 'engines' / engine / 'previous' / 'bin' / 'engine'
+    previous.parent.mkdir(parents=True)
+    previous.write_text('previous working engine')
+    settings = Settings(tmp_path)
+    settings.update({key: str(previous)})
+    manager = UpdateManager(settings)
+    monkeypatch.setattr(manager, '_requirements', lambda engine: ([], 'cpu', 2))
+    monkeypatch.setattr(manager, '_capture', lambda *a, **kw: SHA + '\trefs/heads/main')
+    check = manager.check(engine)
+    def fail(argv, cwd, env):
+        (cwd / 'build').mkdir()
+        (cwd / 'build' / 'large-artifact').write_text('compiler output')
+        (cwd.parent / 'venv').mkdir()
+        (cwd.parent / 'venv' / 'large-package').write_text('package output')
+        (cwd.parent / 'build.log').write_text('diagnostic: compiler failed')
+        raise RuntimeError('compile failed')
+    monkeypatch.setattr(manager, '_run', fail)
+    manager.start(check['check_id'])
+    manager.thread.join(2)
+    status = manager.status()
+    assert status['state'] == 'failed'
+    assert 'compile failed' in status['error']
+    assert status['log'] == 'diagnostic: compiler failed'
+    build = Path(status['path'])
+    assert not (build / 'source').exists()
+    assert not (build / 'venv').exists()
+    assert previous.read_text() == 'previous working engine'
+    assert settings.data[key] == str(previous)
+
+
+def test_timed_out_build_retains_artifacts_that_children_may_be_using(tmp_path, monkeypatch):
+    manager = UpdateManager(Settings(tmp_path))
+    check = ready(manager, monkeypatch)
+    def timeout(argv, cwd, env):
+        (cwd / 'compiler-output').write_text('possibly still in use')
+        raise subprocess.TimeoutExpired(argv, 7200)
+    monkeypatch.setattr(manager, '_run', timeout)
+    manager.start(check['check_id'])
+    manager.thread.join(2)
+    status = manager.status()
+    assert status['state'] == 'failed'
+    assert 'child build processes may still be running' in status['error']
+    assert (Path(status['path']) / 'source' / 'compiler-output').is_file()
+
+
+def test_failed_cleanup_preserves_selected_build(tmp_path):
+    settings = Settings(tmp_path)
+    manager = UpdateManager(settings)
+    build = tmp_path / 'engines' / 'selected'
+    binary = build / 'source' / 'build' / 'bin' / 'llama-server'
+    binary.parent.mkdir(parents=True)
+    binary.write_text('selected installation')
+    settings.update({'llamacpp_path': str(binary)})
+    manager._clean_failed_build(build)
+    assert binary.read_text() == 'selected installation'

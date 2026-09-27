@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import platform
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -168,6 +169,20 @@ class UpdateManager:
                            stderr=subprocess.STDOUT, check=True,
                            timeout=30 if argv[-1] == '--version' else 7200)
 
+    def _clean_failed_build(self, build):
+        # Only this attempt's heavy artifacts are disposable. Logs and job
+        # metadata remain, and a selected installation must never be removed.
+        for _, _, key in SOURCES.values():
+            selected = self.settings.data.get(key)
+            if selected and Path(selected).resolve().is_relative_to(build.resolve()):
+                return
+        for name in ('source', 'venv'):
+            artifact = build / name
+            if artifact.is_symlink():
+                artifact.unlink()
+            elif artifact.exists():
+                shutil.rmtree(artifact)
+
     def _build(self, check, build):
         try:
             engine = check['engine']
@@ -204,6 +219,16 @@ class UpdateManager:
             with self.lock:
                 self.job.update(state='complete', stage='Ready for future launches', executable=str(binary))
         except Exception as exc:
+            cleanup_error = ''
+            if isinstance(exc, subprocess.TimeoutExpired):
+                # subprocess.run stops its direct child on timeout, but compiler
+                # descendants may remain. Do not delete files they may be using.
+                cleanup_error = ' Build artifacts retained because child build processes may still be running after the timeout.'
+            else:
+                try:
+                    self._clean_failed_build(build)
+                except OSError as cleanup_exc:
+                    cleanup_error = f' Could not remove failed build artifacts: {cleanup_exc}.'
             with self.lock:
                 self.job.update(state='failed', stage='Build failed; previous engine retained',
-                                error=f'{exc}. Review the build log and requirements, then check again to retry.')
+                                error=f'{exc}.{cleanup_error} Review the build log and requirements, then check again to retry.')
