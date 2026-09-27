@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
 import { Toast, TopBar, ThemeToggle } from './components.jsx'
 import Dashboard from './views/Dashboard.jsx'
@@ -30,6 +30,8 @@ export default function App() {
   const [toast, setToast] = useState(null)
   const [launchModel, setLaunchModel] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const serversRequest = useRef(null)
+  const hardwareRequest = useRef(null)
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
 
   const toggleTheme = useCallback(() => {
@@ -47,23 +49,35 @@ export default function App() {
 
   const notify = useCallback((message, error = false) => setToast({ message, error, at: Date.now() }), [])
 
-  const refreshServers = useCallback(async () => {
-    try {
-      const r = await api.servers()
-      setServers(r?.servers ?? [])
-      return true
-    } catch {
-      return false
-    }
+  const refreshServers = useCallback(() => {
+    if (serversRequest.current) return serversRequest.current
+    serversRequest.current = (async () => {
+      try {
+        const r = await api.servers()
+        setServers(r?.servers ?? [])
+        return true
+      } catch {
+        return false
+      } finally {
+        serversRequest.current = null
+      }
+    })()
+    return serversRequest.current
   }, [])
 
-  const refreshHardware = useCallback(async () => {
-    try {
-      setHardware(await api.hardware())
-      return true
-    } catch {
-      return false
-    }
+  const refreshHardware = useCallback(() => {
+    if (hardwareRequest.current) return hardwareRequest.current
+    hardwareRequest.current = (async () => {
+      try {
+        setHardware(await api.hardware())
+        return true
+      } catch {
+        return false
+      } finally {
+        hardwareRequest.current = null
+      }
+    })()
+    return hardwareRequest.current
   }, [])
 
   const refresh = async () => {

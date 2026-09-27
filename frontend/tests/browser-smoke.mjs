@@ -25,7 +25,11 @@ try {
       let release;
       const held = new Promise(resolve => { release = resolve; });
       let hardwareReads = 0;
+      let hardwareStarted = 0;
+      let serversStarted = 0;
       window.fetch = async (path, options) => {
+        if (path === '/api/hardware') hardwareStarted++;
+        if (path === '/api/servers') serversStarted++;
         if (path === '/api/hardware' || path === '/api/servers') await held;
         const response = await original(path, options);
         if (path !== '/api/hardware') return response;
@@ -36,10 +40,17 @@ try {
         ]});
       };
       const refresh = [...document.querySelectorAll('button')].find(x => x.textContent === 'Refresh');
-      refresh.click();
-      await wait(30);
-      check(refresh.disabled && refresh.textContent === 'Refreshing…', 'Refresh lacks busy state');
-      release();
+      try {
+        refresh.click();
+        await wait(30);
+        check(refresh.disabled && refresh.textContent === 'Refreshing…', 'Refresh lacks busy state');
+        await wait(6500);
+        check(hardwareStarted === 1, 'Hardware polls overlap a pending Refresh request');
+        check(serversStarted === 1, 'Server polls overlap a pending Refresh request');
+        check(refresh.disabled, 'Refresh completed before its requests finished');
+      } finally {
+        release();
+      }
       await wait(600);
       check(!refresh.disabled, 'Refresh stayed disabled');
       check(document.querySelector('.sb-status').textContent.includes('4.0 / 16 GB'), 'VRAM usage is not total minus free');
@@ -82,7 +93,7 @@ try {
       await wait(4300);
       check(modelReads === afterCompletion, 'Completed download repeatedly rescans models');
       check(hardwareReads >= 2, 'Hardware did not poll again');
-      return 'Refresh, VRAM, hardware polling, token handling, and download transition passed';
+      return 'Refresh, serialized polling, VRAM, token handling, and download transition passed';
     })()
   `).result
   console.log(result)
