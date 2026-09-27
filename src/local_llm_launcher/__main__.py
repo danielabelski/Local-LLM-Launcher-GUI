@@ -28,7 +28,7 @@ def main() -> None:
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     print(f"Local-LLM-Launcher-GUI running at {url}  (Ctrl+C to quit)")
-    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="warning", proxy_headers=False)
 
 
 if __name__ == "__main__":

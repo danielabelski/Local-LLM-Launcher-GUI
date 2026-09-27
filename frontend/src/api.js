@@ -16,6 +16,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  checkUpdate: (engine) => request(`/api/updates/check/${engine}`, { method: 'POST' }),
+  startUpdate: (checkId) => request('/api/updates', { method: 'POST', body: JSON.stringify({ check_id: checkId }) }),
+  updateStatus: () => request('/api/updates'),
   hardware: () => request('/api/hardware'),
   about: () => request('/api/about'),
   models: () => request('/api/models'),

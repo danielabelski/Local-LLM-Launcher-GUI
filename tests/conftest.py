@@ -26,6 +26,7 @@ def isolated_api_state(tmp_path, monkeypatch):
     api = sys.modules.get("local_llm_launcher.api")
     if api is not None:
         monkeypatch.setattr(api, "settings", api.Settings(app_dir=tmp_path))
+        monkeypatch.setattr(api, "updates", api.UpdateManager(api.settings))
         monkeypatch.setattr(api, "servers", api.ServerManager(app_dir=tmp_path))
         monkeypatch.setattr(api, "downloads", api.DownloadManager())
         monkeypatch.setattr(api, "openwebui", api.OpenWebUIManager(app_dir=tmp_path))

@@ -13,6 +13,7 @@ DEFAULTS: Dict[str, Any] = {
     "hf_token": None,
     "gguf_folders": [],
     "llamacpp_path": None,
+    "vllm_path": None,
     "lan_access": False,
 }
 

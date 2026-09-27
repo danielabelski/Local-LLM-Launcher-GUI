@@ -214,7 +214,7 @@ def find_llamacpp(extra_path: Optional[str] = None) -> Optional[str]:
     return None
 
 
-def detect_hardware(llamacpp_hint: Optional[str] = None) -> Hardware:
+def detect_hardware(llamacpp_hint: Optional[str] = None, vllm_hint: Optional[str] = None) -> Hardware:
     """Detect everything. Must never raise — degrade gracefully on any failure."""
     notes: List[str] = []
     try:
@@ -236,7 +236,8 @@ def detect_hardware(llamacpp_hint: Optional[str] = None) -> Hardware:
         disk_free_gb = 0.0
 
     engines = EngineAvailability(
-        vllm_native=_vllm_native_available(),
+        vllm_native=(bool(vllm_hint and os.path.isfile(vllm_hint) and os.access(vllm_hint, os.X_OK))
+                     if vllm_hint else _vllm_native_available()),
         vllm_docker=_vllm_docker_available(),
         llamacpp_path=find_llamacpp(llamacpp_hint),
     )

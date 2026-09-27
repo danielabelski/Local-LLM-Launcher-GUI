@@ -70,7 +70,7 @@ def test_launch_resolves_port_before_build_spec(tmp_path, monkeypatch):
         mgr = ServerManager(app_dir=tmp_path)
         seen_port = {}
 
-        def fake_build(engine_mode, model, config, llamacpp_binary=None):
+        def fake_build(engine_mode, model, config, llamacpp_binary=None, vllm_binary=None):
             # Mirrors a real builder: the config port becomes the argv port.
             seen_port["config"] = config["port"]
             return {
@@ -95,7 +95,7 @@ def test_launch_resolves_port_before_build_spec(tmp_path, monkeypatch):
 
 def test_launch_reserves_port_before_server_listens(tmp_path, monkeypatch):
     mgr = ServerManager(app_dir=tmp_path)
-    monkeypatch.setattr(mgr, "build_spec", lambda _mode, _model, config, _binary: {
+    monkeypatch.setattr(mgr, "build_spec", lambda _mode, _model, config, _binary, _vllm_binary: {
         "argv": [sys.executable, "-c", "import time; time.sleep(60)"],
         "env": {}, "port": config["port"],
     })

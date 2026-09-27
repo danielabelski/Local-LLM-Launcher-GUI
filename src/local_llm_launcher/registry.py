@@ -71,9 +71,9 @@ class ServerManager:
     # ------------------------------------------------------------------- launch
 
     def build_spec(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
-                   llamacpp_binary: Optional[str] = None) -> Dict[str, Any]:
+                   llamacpp_binary: Optional[str] = None, vllm_binary: Optional[str] = None) -> Dict[str, Any]:
         if engine_mode == "vllm-native":
-            return vllm_native.build(model, config)
+            return vllm_native.build(model, config, binary=vllm_binary or "vllm")
         if engine_mode == "vllm-docker":
             return vllm_docker.build(model, config)
         if engine_mode == "llamacpp":
@@ -81,7 +81,7 @@ class ServerManager:
         raise ValueError(f"Unknown engine mode '{engine_mode}'")
 
     def launch(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
-               llamacpp_binary: Optional[str] = None) -> LocalServer:
+               llamacpp_binary: Optional[str] = None, vllm_binary: Optional[str] = None) -> LocalServer:
         with self._lock:
             # Reserve the port before building/spawning: a new process may not
             # listen yet when another launch arrives.
@@ -91,7 +91,7 @@ class ServerManager:
             reserved = {s.port for s in self.servers.values() if s.is_running()}
             config["port"] = find_free_port(int(config.get("port", default_port)),
                                             reserved=reserved)
-            spec = self.build_spec(engine_mode, model, config, llamacpp_binary)
+            spec = self.build_spec(engine_mode, model, config, llamacpp_binary, vllm_binary)
             srv = LocalServer(
                 server_id=uuid.uuid4().hex[:12],
                 engine=engine_mode,

@@ -1,12 +1,13 @@
 """REST API for the GUI."""
 from __future__ import annotations
 
+import ipaddress
 import threading
 import time
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import __version__, advisor, catalog, discovery, failures, hardware
@@ -14,10 +15,12 @@ from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
 from .openwebui import OpenWebUIManager
 from .registry import ServerManager
+from .updates import UpdateManager
 
 router = APIRouter(prefix="/api")
 
 settings = Settings()
+updates = UpdateManager(settings)
 servers = ServerManager()
 downloads = DownloadManager()
 openwebui = OpenWebUIManager()
@@ -28,11 +31,14 @@ _hw_lock = threading.Lock()
 
 def get_hardware(max_age: float = 5.0) -> Dict[str, Any]:
     now = time.time()
+    paths = (settings.data.get("llamacpp_path"), settings.data.get("vllm_path"))
     with _hw_lock:
-        if _hw_cache["data"] is None or now - _hw_cache["at"] > max_age:
-            hw = hardware.detect_hardware(llamacpp_hint=settings.data.get("llamacpp_path"))
+        if _hw_cache.get("paths") != paths or _hw_cache["data"] is None or now - _hw_cache["at"] > max_age:
+            hw = hardware.detect_hardware(llamacpp_hint=settings.data.get("llamacpp_path"),
+                                          vllm_hint=settings.data.get("vllm_path"))
             _hw_cache["data"] = hw.to_dict()
             _hw_cache["at"] = now
+            _hw_cache["paths"] = paths
         return _hw_cache["data"]
 
 
@@ -94,6 +100,7 @@ class SettingsUpdate(BaseModel):
     hf_token: Optional[str] = None
     gguf_folders: List[str] = Field(default_factory=list)
     llamacpp_path: Optional[str] = None
+    vllm_path: Optional[str] = None
     lan_access: bool = False
 
 
@@ -222,7 +229,8 @@ def api_launch(body: LaunchRequest):
                                  "See Settings for install instructions.")
     try:
         srv = servers.launch(body.engine_mode, model, config,
-                             llamacpp_binary=hw["engines"].get("llamacpp_path"))
+                             llamacpp_binary=hw["engines"].get("llamacpp_path"),
+                             vllm_binary=settings.data.get("vllm_path"))
     except RuntimeError as e:
         raise HTTPException(400, str(e))
     return srv.status()
@@ -336,3 +344,44 @@ def api_openwebui_launch():
 def api_openwebui_stop():
     openwebui.stop()
     return openwebui.status()
+
+
+# Source builds are local administrative actions, never LAN/proxy operations.
+def _require_local_update(request: Request):
+    try:
+        local = request.client and ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        local = False
+    if not local or any(name in request.headers for name in
+                        ("forwarded", "x-forwarded-for", "x-real-ip")):
+        raise HTTPException(403, "Engine updates require a direct connection from this computer.")
+
+
+@router.get("/updates")
+def api_update_status(request: Request):
+    _require_local_update(request)
+    return updates.status()
+
+
+@router.post("/updates/check/{engine}")
+def api_update_check(engine: str, request: Request):
+    _require_local_update(request)
+    try:
+        return updates.check(engine)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+class UpdateRequest(BaseModel):
+    check_id: str
+
+
+@router.post("/updates")
+def api_start_update(body: UpdateRequest, request: Request):
+    _require_local_update(request)
+    try:
+        return updates.start(body.check_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
