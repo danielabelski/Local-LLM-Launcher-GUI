@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from . import __version__, advisor, catalog, discovery, failures, hardware
 from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
+from .engines import vllm_backends
 from .openwebui import OpenWebUIManager
 from .registry import ServerManager
 from .updates import UpdateManager
@@ -199,11 +200,21 @@ class AdviseRequest(BaseModel):
 @router.post("/advise")
 def api_advise(body: AdviseRequest):
     model = find_model(body.repo_id)
+    mode = body.engine_mode or body.engine
     try:
         from .engines.placement import validate
-        hw = get_hardware()
-        validate(body.engine_mode or body.engine, body.config, hw.get("numa"))
-        return advisor.advise(body.engine, model, body.config, hw)
+        hw = vllm_backends.server_hardware(mode, get_hardware())
+        validate(mode, body.config, hw.get("numa"))
+        # Advice is polled; never wait on a runtime probe here (launch does).
+        warnings = vllm_backends.validate(mode, model, body.config, hw,
+                                          settings.data.get("vllm_path") or "vllm", wait=False)
+        report = advisor.advise(body.engine, model, body.config, hw)
+        report["flags"].update(warnings)
+        if warnings:
+            if report["overall"]["level"] == "green":
+                report["overall"]["level"] = "yellow"
+            report["overall"]["details"].extend(w["message"] for w in warnings.values())
+        return report
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -234,7 +245,7 @@ def api_launch(body: LaunchRequest):
     try:
         srv = servers.launch(body.engine_mode, model, config,
                              llamacpp_binary=hw["engines"].get("llamacpp_path"),
-                             vllm_binary=settings.data.get("vllm_path"))
+                             vllm_binary=settings.data.get("vllm_path"), hardware=hw)
     except (RuntimeError, ValueError) as e:
         raise HTTPException(400, str(e))
     return srv.status()

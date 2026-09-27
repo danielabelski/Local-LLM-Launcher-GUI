@@ -4,6 +4,32 @@ import re
 from .. import hardware
 
 
+_GPU_ITEM = re.compile(r'[0-9]+|(?:GPU|MIG)-[0-9A-Za-z/-]+')  # nvidia-smi number or CUDA UUID
+
+
+def normalize_device_ids(raw):
+    """The one spelling of a GPU list that advice, checks and the engine all use.
+
+    Returns None when unset. Raises ValueError for anything but a comma list of
+    distinct nvidia-smi numbers or CUDA GPU UUIDs (so not '0 1', 'gpu1' or '0,00').
+    """
+    text = '' if raw is None else str(raw).strip()
+    if not text:
+        return None
+    items = [item.strip() for item in text.split(',') if item.strip()]
+    items = [str(int(item)) if item.isascii() and item.isdigit() else item for item in items]
+    if (isinstance(raw, bool) or not items or len(set(items)) != len(items)
+            or not all(_GPU_ITEM.fullmatch(item) for item in items)):
+        raise ValueError('Enter GPU numbers separated by commas, such as 0,1.')
+    return ','.join(items)
+
+
+def parse_device_ids(raw):
+    """GPU numbers (nvidia-smi order) in the order given; None when unset. Raises ValueError."""
+    ids = normalize_device_ids(raw)
+    return None if ids is None else [int(item) for item in ids.split(',')]
+
+
 def validate(engine, config, numa=None):
     if config.get('numactl_interleave'):
         if engine == 'vllm-docker':
@@ -11,6 +37,8 @@ def validate(engine, config, numa=None):
         numa = numa if numa is not None else hardware.detect_numa()
         if not numa.get('linux') or not numa.get('numactl_path'):
             raise ValueError('Memory interleaving requires Linux and numactl installed on PATH.')
+    if engine.startswith('vllm'):
+        normalize_device_ids(config.get('device_ids'))
     if engine != 'llamacpp':
         return
     mode = config.get('split_mode') or 'layer'

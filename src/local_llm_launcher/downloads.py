@@ -1,6 +1,7 @@
 """Hugging Face Hub search and download management with polled progress."""
 from __future__ import annotations
 
+import glob
 import threading
 import uuid
 from pathlib import Path
@@ -116,11 +117,16 @@ class DownloadManager:
         except Exception as e:
             raise RuntimeError(_friendly_hub_error(e)) from e
 
+        # vLLM reads top-level weights and prefers safetensors, so top-level .bin/.pt
+        # files beside top-level safetensors are unused copies of the same weights.
+        top = [f["filename"] for f in detail["files"] if "/" not in f["filename"]]
+        ignore = _SNAPSHOT_IGNORE + ([glob.escape(n) for n in top if n.endswith((".bin", ".pt"))]
+                                     if any(n.endswith(".safetensors") for n in top) else [])
         if filename:
             files = [f for f in detail["files"] if f["filename"] == filename]
         else:
             files = list(filter_repo_objects(
-                detail["files"], ignore_patterns=_SNAPSHOT_IGNORE,
+                detail["files"], ignore_patterns=ignore,
                 key=lambda item: item["filename"]))
 
         targets = [(f.get("cache_key"), f["size_bytes"]) for f in files]
@@ -140,7 +146,7 @@ class DownloadManager:
                     hf_hub_download(repo_id=repo_id, filename=filename, token=token)
                 else:
                     snapshot_download(repo_id=repo_id, token=token,
-                                      ignore_patterns=_SNAPSHOT_IGNORE)
+                                      ignore_patterns=ignore)
                 job.status = "done"
             except Exception as e:  # surfaced to the GUI, must not kill the app
                 job.error = _friendly_hub_error(e)

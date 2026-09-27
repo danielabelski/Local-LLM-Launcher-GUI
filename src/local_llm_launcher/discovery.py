@@ -104,6 +104,33 @@ def _file_size(p: Path) -> int:
         return 0
 
 
+_NOT_FOR_INFERENCE = ("training_args.bin", "optimizer.bin", "optimizer.pt", "scheduler.pt", "scaler.pt")
+
+
+def _loaded_weights(snap: Path, files: List[Path]) -> List[Path]:
+    """The files vLLM's automatic loader reads (v0.30 DefaultModelLoader), so a repo
+    that ships the same weights twice (.bin and .safetensors, or Mistral's
+    consolidated copy beside the sharded one) is counted once."""
+    # vLLM globs only the top folder; keep nested files only when nothing is on top.
+    files = [f for f in files if f.parent == snap] or files
+    safetensors = [f for f in files if f.suffix.lower() == ".safetensors"]
+    consolidated = [f for f in safetensors if f.name.startswith("consolidated")]
+    chosen = consolidated or safetensors
+    if chosen:
+        index = "consolidated.safetensors.index.json" if consolidated else "model.safetensors.index.json"
+        try:
+            # The map lists every tensor; only its few distinct file names matter.
+            listed = set(json.loads((snap / index).read_text())["weight_map"].values())
+            return [f for f in chosen if f.relative_to(snap).as_posix() in listed] or chosen
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return chosen
+    for suffix in (".bin", ".pt"):
+        chosen = [f for f in files if f.suffix.lower() == suffix and f.name not in _NOT_FOR_INFERENCE]
+        if chosen:
+            return chosen
+    return []
+
+
 def _scan_repo(repo_dir: Path) -> Optional[LocalModel]:
     name = repo_dir.name
     if not name.startswith("models--"):
@@ -114,17 +141,17 @@ def _scan_repo(repo_dir: Path) -> Optional[LocalModel]:
         return None
 
     gguf_files: List[Dict[str, Any]] = []
+    other_weights: List[Path] = []
     weight_bytes = 0
-    has_safetensors = False
     for f in sorted(snap.rglob("*")):
         if not f.is_file() and not f.is_symlink():
             continue
         suffix = f.suffix.lower()
         if suffix not in _WEIGHT_EXTS:
             continue
-        size = _file_size(f)
-        weight_bytes += size
         if suffix == ".gguf":
+            size = _file_size(f)
+            weight_bytes += size
             gguf_files.append({
                 "filename": f.name,
                 "path": str(f),
@@ -132,8 +159,10 @@ def _scan_repo(repo_dir: Path) -> Optional[LocalModel]:
                 "size_gb": round(size / (1024**3), 2),
                 "quant": guess_gguf_quant(f.name),
             })
-        elif suffix == ".safetensors":
-            has_safetensors = True
+        else:
+            other_weights.append(f)
+    has_safetensors = any(f.suffix.lower() == ".safetensors" for f in other_weights)
+    weight_bytes += sum(_file_size(f) for f in _loaded_weights(snap, other_weights))
 
     if weight_bytes == 0:
         return None

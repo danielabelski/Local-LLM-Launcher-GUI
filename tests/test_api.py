@@ -109,7 +109,7 @@ def test_launch_injects_loopback_host_by_default(client, monkeypatch):
     monkeypatch.setattr(api, "find_model", lambda repo_id: {**FAKE_MODEL, "repo_id": repo_id})
     monkeypatch.setattr(api, "get_hardware", lambda: {"engines": {"llamacpp_path": None, "vllm_native": True}})
     monkeypatch.setattr(api.servers, "launch",
-                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None: _record(captured, mode, config))
+                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None, hardware=None: _record(captured, mode, config))
 
     client.patch("/api/settings", json={"lan_access": False})
     client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "org/model-8B", "config": {}})
@@ -123,7 +123,7 @@ def test_launch_injects_lan_host_when_enabled(client, monkeypatch):
     monkeypatch.setattr(api, "find_model", lambda repo_id: {**FAKE_MODEL, "repo_id": repo_id})
     monkeypatch.setattr(api, "get_hardware", lambda: {"engines": {"llamacpp_path": None, "vllm_native": True}})
     monkeypatch.setattr(api.servers, "launch",
-                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None: _record(captured, mode, config))
+                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None, hardware=None: _record(captured, mode, config))
 
     client.patch("/api/settings", json={"lan_access": True})
     client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "org/model-8B", "config": {}})

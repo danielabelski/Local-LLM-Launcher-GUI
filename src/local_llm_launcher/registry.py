@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .engines import llamacpp, vllm_docker, vllm_native
+from .engines import llamacpp, vllm_backends, vllm_docker, vllm_native
 from .engines.base import LocalServer
 from . import catalog
 
@@ -83,7 +83,11 @@ class ServerManager:
         raise ValueError(f"Unknown engine mode '{engine_mode}'")
 
     def launch(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
-               llamacpp_binary: Optional[str] = None, vllm_binary: Optional[str] = None) -> LocalServer:
+               llamacpp_binary: Optional[str] = None, vllm_binary: Optional[str] = None,
+               hardware: Optional[Dict[str, Any]] = None) -> LocalServer:
+        # Validate before taking the lock: probing the vLLM runtime can take many
+        # seconds, and status polling, logs and stop all need this lock.
+        vllm_backends.validate(engine_mode, model, config, hardware, vllm_binary or "vllm")
         with self._lock:
             # Reserve the port before building/spawning: a new process may not
             # listen yet when another launch arrives.

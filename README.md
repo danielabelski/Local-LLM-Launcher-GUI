@@ -65,6 +65,35 @@ the error into something you can actually act on.
 
 ## Getting it running
 
+### Optional vLLM backend tuning
+
+Launch → Advanced settings includes **linear**, **MoE** (mixture-of-experts),
+and **attention** backends (alternative implementations of the model's calculations).
+Leave them **automatic** unless comparing a particular implementation. vLLM
+0.30 already improves automatic NVFP4 selection (4-bit model computation) on
+compatible RTX 50-series models; selecting a backend does not convert a model
+to that format.
+
+The optional `b12x` implementations target SM120/121 (GPU capability versions,
+including the RTX 5060 Ti). Install the `vllm[b12x]` extra in **the same Python
+environment as the configured vLLM executable**, preserving your chosen vLLM
+version. Docker users need the dependency inside their image. The launcher
+does not install it automatically.
+
+For vLLM 0.30 the attention selector is **`B12X`**, despite earlier release
+discussion using `B12X_ATTN`. It requires BF16 (16-bit brain floating point)
+model computation and compatible conversation memory, and cannot split context
+processing across GPUs. B12X MoE also has model-format restrictions and cannot
+use expert parallelism (splitting experts among separate workers).
+
+Native checks inspect the selected executable, not the launcher's Python.
+Unavailable checks are shown as unverified; Docker runtime/package support is
+always unverified here. Package presence and recognized flags do not guarantee
+a model will run or be faster. Compare performance on your own GPU before
+keeping an override. See the [versioned B12X documentation](https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/b12x.md).
+
+### Install the launcher
+
 Open a terminal (on Windows: search for "Command Prompt" or "PowerShell"; on
 Mac: search for "Terminal"; on Linux: you know where it is) and run:
 

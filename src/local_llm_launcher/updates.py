@@ -19,6 +19,9 @@ import uuid
 
 import psutil
 
+# A freshly built vLLM imports torch with a cold bytecode cache on its first run.
+VERSION_TIMEOUT = 300
+
 SOURCES = {
     'llamacpp': ('https://github.com/ggml-org/llama.cpp.git', 'master', 'llamacpp_path'),
     'vllm': ('https://github.com/vllm-project/vllm.git', 'main', 'vllm_path'),
@@ -167,7 +170,7 @@ class UpdateManager:
             log.flush()
             subprocess.run(list(map(str, argv)), cwd=cwd, env=env, stdout=log,
                            stderr=subprocess.STDOUT, check=True,
-                           timeout=30 if argv[-1] == '--version' else 7200)
+                           timeout=VERSION_TIMEOUT if argv[-1] == '--version' else 7200)
 
     def _clean_failed_build(self, build):
         # Only this attempt's heavy artifacts are disposable. Logs and job
