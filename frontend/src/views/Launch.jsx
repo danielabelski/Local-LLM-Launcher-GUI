@@ -111,6 +111,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   const [advice, setAdvice] = useState(null)
   const [launching, setLaunching] = useState(false)
   const debounce = useRef(null)
+  const initializedModel = useRef(null)
 
   const model = useMemo(() => models.find((m) => m.repo_id === repoId), [models, repoId])
 
@@ -123,7 +124,8 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   }, [])
 
   useEffect(() => {
-    if (!model) return
+    if (!model || !hardware || initializedModel.current === model.repo_id) return
+    initializedModel.current = model.repo_id
     const mode = defaultEngineMode(model, hardware)
     setEngineMode(mode)
   }, [model, hardware])

@@ -16,11 +16,11 @@ const TABS = [
 ]
 
 const BREADCRUMBS = {
-  dashboard: 'Overview / <span>System status</span>',
-  models: 'Library / <span>Installed & search</span>',
-  launch: 'Launch / <span>Configure & start</span>',
-  servers: 'Servers / <span>Running instances</span>',
-  settings: 'Settings / <span>Configuration</span>',
+  dashboard: 'Overview / System status',
+  models: 'Library / Installed & search',
+  launch: 'Launch / Configure & start',
+  servers: 'Servers / Running instances',
+  settings: 'Settings / Configuration',
 }
 
 export default function App() {
@@ -29,6 +29,7 @@ export default function App() {
   const [servers, setServers] = useState([])
   const [toast, setToast] = useState(null)
   const [launchModel, setLaunchModel] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
 
   const toggleTheme = useCallback(() => {
@@ -50,17 +51,39 @@ export default function App() {
     try {
       const r = await api.servers()
       setServers(r?.servers ?? [])
+      return true
     } catch {
-      setServers([])
+      return false
     }
   }, [])
 
+  const refreshHardware = useCallback(async () => {
+    try {
+      setHardware(await api.hardware())
+      return true
+    } catch {
+      return false
+    }
+  }, [])
+
+  const refresh = async () => {
+    setRefreshing(true)
+    try {
+      const results = await Promise.all([refreshHardware(), refreshServers()])
+      const ok = results.every(Boolean)
+      notify(ok ? 'Hardware and server status refreshed.' : 'Refresh failed. Check the launcher connection.', !ok)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => {
-    api.hardware().then(setHardware).catch(() => setHardware(null))
+    refreshHardware()
     refreshServers()
     const t = setInterval(refreshServers, 3000)
-    return () => clearInterval(t)
-  }, [refreshServers])
+    const hw = setInterval(refreshHardware, 6000)
+    return () => { clearInterval(t); clearInterval(hw) }
+  }, [refreshServers, refreshHardware])
 
   const goLaunch = useCallback((model) => {
     setLaunchModel(model)
@@ -68,9 +91,8 @@ export default function App() {
   }, [])
 
   const running = servers.filter((s) => s.running).length
-  const modelCount = hardware ? null : null
   const vramUsed = hardware?.total_vram_mb
-    ? (hardware.total_vram_mb / 1024).toFixed(1)
+    ? ((hardware.gpus ?? []).reduce((sum, gpu) => sum + Math.max(0, gpu.vram_total_mb - gpu.vram_free_mb), 0) / 1024).toFixed(1)
     : null
   const vramTotal = hardware?.total_vram_mb
     ? Math.round(hardware.total_vram_mb / 1024)
@@ -127,7 +149,8 @@ export default function App() {
       <main className="main">
         <TopBar title={TABS.find(t => t.id === tab)?.label} breadcrumb={BREADCRUMBS[tab]}>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
-          <button className="topbar-btn topbar-btn-ghost" onClick={refreshServers}>Refresh</button>
+          <button className="topbar-btn topbar-btn-ghost" onClick={refresh} disabled={refreshing}
+            aria-busy={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
           <button className="topbar-btn topbar-btn-primary" onClick={() => goLaunch(null)}>Launch a model</button>
         </TopBar>
 
@@ -135,7 +158,7 @@ export default function App() {
           {tab === 'dashboard' && (
             <Dashboard hardware={hardware} servers={servers} goLaunch={goLaunch} setTab={setTab} notify={notify} />
           )}
-          {tab === 'models' && <Models hardware={hardware} goLaunch={goLaunch} notify={notify} />}
+          {tab === 'models' && <Models goLaunch={goLaunch} notify={notify} />}
           {tab === 'launch' && (
             <Launch hardware={hardware} initialModel={launchModel} notify={notify}
               onLaunched={() => { refreshServers(); setTab('servers') }} />
