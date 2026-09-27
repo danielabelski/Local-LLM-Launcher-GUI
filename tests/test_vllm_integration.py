@@ -34,24 +34,25 @@ def test_explicit_backend_arguments_and_automatic_omission(builder, monkeypatch)
     assert "--linear-backend" not in automatic["argv"]
     assert "--moe-backend" not in automatic["argv"]
     assert "--attention-backend" not in automatic["argv"]
-    probe.assert_not_called()
     argv = builder(MODEL, {"linear_backend": "flashinfer_cutlass", "attention_backend": "B12X"})["argv"]
     assert argv[argv.index("--linear-backend") + 1] == "flashinfer_cutlass"
     assert argv[argv.index("--attention-backend") + 1] == "B12X"
     assert argv.count("--attention-backend") == 1
+    # Builders only assemble commands; ServerManager.launch validates once, with hardware.
+    probe.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", ["vllm-native", "vllm-docker"])
 def test_advice_and_launch_reject_same_precision_conflict(client, monkeypatch, mode):
-    launch = Mock()
-    monkeypatch.setattr(api.servers, "launch", launch)
+    build = Mock()
+    monkeypatch.setattr(api.servers, "build_spec", build)
     config = {"attention_backend": "B12X", "dtype": "float16"}
     advice = client.post("/api/advise", json={"engine": "vllm", "engine_mode": mode,
                                             "repo_id": "test/model", "config": config})
     response = client.post("/api/servers", json={"engine_mode": mode, "repo_id": "test/model", "config": config})
     assert advice.status_code == response.status_code == 400
     assert advice.json()["detail"] == response.json()["detail"]
-    launch.assert_not_called()
+    build.assert_not_called()
 
 
 def test_native_probe_uses_saved_executable(client, monkeypatch):
@@ -61,11 +62,11 @@ def test_native_probe_uses_saved_executable(client, monkeypatch):
     response = client.post("/api/advise", json={"engine": "vllm", "engine_mode": "vllm-native",
                           "repo_id": "test/model", "config": {"linear_backend": "flashinfer_cutlass"}})
     assert response.status_code == 200
-    probe.assert_called_once_with("vllm-native", "/target/bin/vllm")
+    probe.assert_called_once_with("vllm-native", "/target/bin/vllm", wait=False)
 
 
 def test_unknown_support_is_visible_warning(client, monkeypatch):
-    monkeypatch.setattr(vllm_capabilities, "probe", lambda *a: {
+    monkeypatch.setattr(vllm_capabilities, "probe", lambda *a, **kw: {
         "version": None, "flags": None, "b12x": None, "source": "Docker",
         "message": "Docker runtime support is unverified."})
     response = client.post("/api/advise", json={"engine": "vllm", "engine_mode": "vllm-docker",
@@ -78,14 +79,14 @@ def test_unknown_support_is_visible_warning(client, monkeypatch):
 
 
 def test_unsupported_runtime_rejected_before_launch(client, monkeypatch):
-    monkeypatch.setattr(vllm_capabilities, "probe", lambda *a: {**EVIDENCE, "flags": []})
-    launch = Mock()
-    monkeypatch.setattr(api.servers, "launch", launch)
+    monkeypatch.setattr(vllm_capabilities, "probe", lambda *a, **kw: {**EVIDENCE, "flags": []})
+    build = Mock()
+    monkeypatch.setattr(api.servers, "build_spec", build)
     response = client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "test/model",
                           "config": {"linear_backend": "flashinfer_cutlass"}})
     assert response.status_code == 400
     assert "--linear-backend" in response.json()["detail"]
-    launch.assert_not_called()
+    build.assert_not_called()
 
 
 def test_native_gpu_mask_does_not_leak_into_docker_advice(client, monkeypatch):
@@ -107,3 +108,19 @@ def test_valid_backend_reaches_launch_unchanged(client, monkeypatch):
     response = client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "test/model", "config": config})
     assert response.status_code == 200
     assert all(launch.call_args.args[2][key] == value for key, value in config.items())
+    assert launch.call_args.kwargs["hardware"] == HW
+
+
+@pytest.mark.parametrize("mode, expected", [("vllm-native", "1"), ("vllm-docker", None)])
+def test_advice_budget_sees_the_gpus_the_server_will_see(client, monkeypatch, mode, expected):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    seen = {}
+    real_advise = api.advisor.advise
+    def advise(engine, model, config, hw):
+        seen.update(hw)
+        return real_advise(engine, model, config, hw)
+    monkeypatch.setattr(api.advisor, "advise", advise)
+    response = client.post("/api/advise", json={"engine": "vllm", "engine_mode": mode,
+                                               "repo_id": "test/model", "config": {}})
+    assert response.status_code == 200
+    assert seen.get("cuda_visible_devices") == expected

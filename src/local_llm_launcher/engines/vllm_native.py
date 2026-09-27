@@ -8,15 +8,16 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ._args import build_args_and_env
-from .placement import validate, wrap
-from . import vllm_backends, vllm_capabilities
+from .placement import normalize_device_ids, validate, wrap
 
 
 def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "vllm") -> Dict[str, Any]:
     validate("vllm-native", config)
-    if vllm_backends.selected(config):
-        vllm_backends.check(config, model, capabilities=vllm_capabilities.probe("vllm-native", binary))
+    config = {**config, "device_ids": normalize_device_ids(config.get("device_ids"))}
     flags, env, extra = build_args_and_env("vllm", config)
+    # GPU numbers everywhere in the launcher (device_ids, an inherited
+    # CUDA_VISIBLE_DEVICES, advice) are nvidia-smi's; CUDA defaults to fastest-first.
+    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     port = int(config.get("port", 8000))
     host = config.get("host", "127.0.0.1")
     argv = ([binary, "serve", model["repo_id"]]

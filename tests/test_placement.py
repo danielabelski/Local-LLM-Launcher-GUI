@@ -106,3 +106,35 @@ def test_raw_flags_unknown_fit_keep_order():
 
 def test_null_offload_is_unset():
     assert advisor.advise('llamacpp', GGUF, {'n_cpu_moe': None}, DUAL_5060TI)['overall'] == advisor.advise('llamacpp', GGUF, {}, DUAL_5060TI)['overall']
+
+
+@pytest.mark.parametrize('raw, expected', [
+    ('0,1', '0,1'), (' 0 , 1 ', '0,1'), ('1,', '1'), (0, '0'), ('GPU-abc,1', 'GPU-abc,1'), ('01', '1'),
+    ('1,0', '1,0'), ('MIG-GPU-abc/1/0', 'MIG-GPU-abc/1/0'),
+    (None, None), ('', None), ('  ', None),
+])
+def test_normalize_device_ids(raw, expected):
+    from local_llm_launcher.engines.placement import normalize_device_ids
+    assert normalize_device_ids(raw) == expected
+
+
+@pytest.mark.parametrize('raw', ['0 1', ',', '0,0', True, 'gpu1', '-1', '1;2', '1.0', '0,00'])
+def test_malformed_device_ids_rejected_before_launch(raw):
+    from local_llm_launcher.engines.placement import normalize_device_ids, validate
+    with pytest.raises(ValueError):
+        normalize_device_ids(raw)
+    for engine in ('vllm-native', 'vllm-docker'):
+        with pytest.raises(ValueError, match='GPU numbers'):
+            validate(engine, {'device_ids': raw})
+
+
+@pytest.mark.parametrize('raw, expected', [('0, 1', [0, 1]), ('1,0', [1, 0]), (0, [0]), (None, None)])
+def test_parse_device_ids(raw, expected):
+    from local_llm_launcher.engines.placement import parse_device_ids
+    assert parse_device_ids(raw) == expected
+
+
+def test_parse_device_ids_rejects_non_numbers():
+    from local_llm_launcher.engines.placement import parse_device_ids
+    with pytest.raises(ValueError):
+        parse_device_ids('GPU-uuid')

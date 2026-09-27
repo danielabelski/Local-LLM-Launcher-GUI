@@ -14,7 +14,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from . import catalog
-from .engines.placement import validate
+from .engines.placement import parse_device_ids, validate
 
 GB = 1024**3
 MB = 1024**2
@@ -81,15 +81,14 @@ def estimate_kv_gb(
 def _selected_gpus(hw: Dict[str, Any], config: Dict[str, Any]) -> List[Dict[str, Any]]:
     gpus = hw.get("gpus") or []
     raw = config.get("device_ids")
-    if raw:
-        try:
-            wanted = {int(x) for x in str(raw).replace(" ", "").split(",") if x != ""}
-            picked = [g for g in gpus if g["index"] in wanted]
-            if picked:
-                return picked
-        except ValueError:
-            pass
-    return gpus
+    if raw is None or not str(raw).strip():
+        raw = hw.get("cuda_visible_devices")  # what a native server inherits
+    try:
+        wanted = parse_device_ids(raw)
+    except ValueError:
+        return gpus
+    picked = [g for g in gpus if g["index"] in (wanted or ())]
+    return picked or gpus
 
 
 class _Report:

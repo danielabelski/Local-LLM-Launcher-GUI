@@ -452,3 +452,10 @@ def test_no_kv_offload_false_has_no_flag():
                        {"n_gpu_layers": 999, "ctx_size": 8192, "no_kv_offload": False},
                        DUAL_5060TI)
     assert "no_kv_offload" not in a["flags"]
+
+
+def test_selected_gpus_follow_inherited_mask_when_device_ids_unset():
+    gpus = [{"index": 0, "vram_total_mb": 8000}, {"index": 1, "vram_total_mb": 16000}]
+    hw = {"gpus": gpus, "cuda_visible_devices": "1"}
+    assert advisor._selected_gpus(hw, {}) == [gpus[1]]
+    assert advisor._selected_gpus(hw, {"device_ids": "0"}) == [gpus[0]]

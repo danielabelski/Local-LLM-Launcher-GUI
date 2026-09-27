@@ -2,6 +2,8 @@
 import sys
 import time
 
+import pytest
+
 from local_llm_launcher.engines import llamacpp, vllm_docker, vllm_native
 from local_llm_launcher.engines.base import LocalServer
 from local_llm_launcher import failures
@@ -70,9 +72,23 @@ def test_explicit_false_disables_default_on_vllm_flags():
 def test_vllm_native_env_handling():
     spec = vllm_native.build(MODEL, {"device_ids": "0,1", "hf_token": "hf_secret"})
     assert spec["env"]["CUDA_VISIBLE_DEVICES"] == "0,1"
+    # device_ids use nvidia-smi numbering; CUDA's default order is fastest-first.
+    assert spec["env"]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
     assert spec["env"]["HF_TOKEN"] == "hf_secret"
     assert "device_ids" not in " ".join(spec["argv"])
     assert "hf_secret" not in " ".join(spec["argv"])
+
+
+@pytest.mark.parametrize("raw, expected", [(" 0, 1 ", "0,1"), (0, "0")])
+def test_vllm_builders_send_normalized_device_ids(raw, expected):
+    assert vllm_native.build(MODEL, {"device_ids": raw})["env"]["CUDA_VISIBLE_DEVICES"] == expected
+    argv = vllm_docker.build(MODEL, {"device_ids": raw})["argv"]
+    assert argv[argv.index("--gpus") + 1] == f'"device={expected}"'
+
+
+def test_vllm_native_always_uses_nvidia_smi_numbering():
+    # An inherited CUDA_VISIBLE_DEVICES must mean the same cards nvidia-smi lists.
+    assert vllm_native.build(MODEL, {})["env"]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
 
 
 def test_vllm_native_extra_args():

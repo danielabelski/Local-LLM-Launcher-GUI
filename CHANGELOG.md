@@ -3,6 +3,26 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
+## Unreleased — vLLM backend controls, September 2026
+
+### Added
+
+- Advanced vLLM linear, MoE and attention backend selectors, including
+  FlashInfer options and optional B12X kernels for SM120/SM121 GPUs such as the
+  RTX 5060 Ti. Automatic stays the default and adds no flags. Advice and launch
+  reject known incompatible combinations and check the selected runtime's
+  supported flags and the optional `b12x` package.
+
+### Fixed
+
+- Launch validation runs before the server registry lock, so a slow runtime
+  check never freezes server status, logs or Stop; advice never waits for it.
+- GPU lists are normalized once and used everywhere; lists such as `0 1` are
+  rejected, `0` means GPU 0, and native launches number GPUs as nvidia-smi does.
+- A freshly built vLLM gets 300 seconds for its first `--version` check.
+- Downloads skip `.bin` copies of weights a repo also ships as safetensors, and
+  installed-model size counts only the files vLLM loads.
+
 ## Unreleased — open issue pass, September 2026
 
 ### Added

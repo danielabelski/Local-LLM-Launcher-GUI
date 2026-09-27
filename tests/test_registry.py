@@ -5,6 +5,11 @@ from threading import Event
 
 import pytest
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+from local_llm_launcher import hardware
+from local_llm_launcher.engines import vllm_capabilities
 from local_llm_launcher.registry import ServerManager, port_in_use
 
 GGUF = {
@@ -287,3 +292,58 @@ def test_remove_keeps_record_when_stop_raises(tmp_path, monkeypatch):
         mgr.remove(srv.server_id)
     assert mgr.get(srv.server_id) is srv
     assert ServerManager(app_dir=tmp_path).get(srv.server_id) is not None
+
+
+VLLM_MODEL = {"repo_id": "test/model", "format": "safetensors", "config": {"torch_dtype": "bfloat16"}}
+EVIDENCE = {"version": "0.30.0", "flags": ["--linear-backend", "--moe-backend", "--attention-backend"],
+            "choices": {}, "b12x": True, "source": "/target/bin/vllm", "message": ""}
+SM120 = {"gpus": [{"index": 0, "compute_capability": "12.0"}]}
+ADA = {"gpus": [{"index": 0, "compute_capability": "8.9"}]}
+
+
+def test_backend_probe_runs_outside_registry_lock(tmp_path, monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    mgr = ServerManager(app_dir=tmp_path)
+    monkeypatch.setattr(mgr, "build_spec", lambda *a, **k: {
+        "argv": [sys.executable, "-c", "pass"], "env": {}, "port": 45131})
+    probing, release = Event(), Event()
+    def probe(*args, **kwargs):
+        probing.set()
+        assert release.wait(5)
+        return EVIDENCE
+    monkeypatch.setattr(vllm_capabilities, "probe", probe)
+    with ThreadPoolExecutor(2) as pool:
+        launch = pool.submit(mgr.launch, "vllm-native", VLLM_MODEL,
+                             {"linear_backend": "flashinfer_cutlass"}, hardware=SM120)
+        assert probing.wait(5)
+        listing = pool.submit(mgr.list)
+        try:
+            # A slow runtime probe must not hold the lock that status polling needs.
+            assert listing.result(1) == []
+        finally:
+            release.set()
+        launch.result(5)
+
+
+def test_launch_validates_gpu_without_the_api(tmp_path, monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    mgr = ServerManager(app_dir=tmp_path)
+    build = Mock()
+    monkeypatch.setattr(mgr, "build_spec", build)
+    monkeypatch.setattr(vllm_capabilities, "probe", lambda *a, **k: EVIDENCE)
+    with pytest.raises(ValueError, match="SM120/SM121"):
+        mgr.launch("vllm-native", VLLM_MODEL, {"linear_backend": "b12x"}, hardware=ADA)
+    # Callers without hardware still get the definite rejection, not a warning.
+    monkeypatch.setattr(hardware, "detect_hardware", lambda **kw: SimpleNamespace(to_dict=lambda: ADA))
+    with pytest.raises(ValueError, match="SM120/SM121"):
+        mgr.launch("vllm-native", VLLM_MODEL, {"linear_backend": "b12x"})
+    build.assert_not_called()
+    assert mgr.list() == []
+
+
+def test_launch_without_backend_choice_skips_hardware_detection(tmp_path, monkeypatch):
+    mgr = ServerManager(app_dir=tmp_path)
+    monkeypatch.setattr(mgr, "build_spec", lambda *a, **k: {
+        "argv": [sys.executable, "-c", "pass"], "env": {}, "port": 45133})
+    monkeypatch.setattr(hardware, "detect_hardware", Mock(side_effect=AssertionError("not needed")))
+    mgr.launch("vllm-native", VLLM_MODEL, {})

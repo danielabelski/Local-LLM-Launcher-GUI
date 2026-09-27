@@ -167,9 +167,10 @@ def test_unknown_gpu_capability_does_not_become_definite_rejection(capability):
 
 
 def test_native_inherited_cuda_mask_is_honored_and_explicit_selection_wins():
-    hw = {'gpus': [{'index': 0, 'compute_capability': '8.9'}, {'index': 1, 'compute_capability': '12.0'}], 'cuda_visible_devices': '1'}
+    hw = {'gpus': [{'index': 0, 'compute_capability': '8.9'}, {'index': 1, 'compute_capability': '12.0'}],
+          'cuda_visible_devices': '1'}
     result = check({'linear_backend': 'b12x'}, hardware=hw)
-    assert 'mixed architectures' not in result['linear_backend']['message']
+    assert 'could not be verified' not in result['linear_backend']['message']
     with pytest.raises(ValueError, match='SM120/SM121'):
         check({'linear_backend': 'b12x', 'device_ids': '0'}, hardware=hw)
     result = check({'linear_backend': 'b12x'}, hardware={**hw, 'cuda_visible_devices': ''})
@@ -205,3 +206,116 @@ def test_raw_tensor_parallel_override_can_leave_subset_uncertain():
     result = check({'linear_backend': 'b12x', 'device_ids': '0,1',
                     'tensor_parallel_size': 2, 'extra_args': '-tp 1'}, hardware=hw)
     assert 'mixed architectures' in result['linear_backend']['message']
+
+
+MIXED = {'gpus': [{'index': 0, 'compute_capability': '8.9'}, {'index': 1, 'compute_capability': '12.0'}]}
+
+
+def test_float32_checkpoint_with_automatic_dtype_runs_as_bf16():
+    # vLLM v0.30 _resolve_auto_dtype downcasts float32 to the platform's first
+    # supported dtype, which is bfloat16 on every SM80+ GPU (so on SM120/121).
+    result = check({'attention_backend': 'B12X'}, model={'config': {'torch_dtype': 'float32'}})
+    assert 'bfloat16' in result['attention_backend']['message']
+    with pytest.raises(ValueError, match='BF16'):
+        check({'attention_backend': 'B12X', 'dtype': 'float32'},
+              model={'config': {'torch_dtype': 'float32'}})
+
+
+@pytest.mark.parametrize('raw', ['--device-ids 0', '--device_ids=0'])
+def test_vllm_device_ids_option_selects_physical_gpus(raw):
+    # vLLM v0.30 --device-ids picks nvidia-smi GPUs when no mask is set.
+    with pytest.raises(ValueError, match='SM120/SM121'):
+        check({'linear_backend': 'b12x', 'extra_args': raw}, hardware=MIXED)
+    check({'linear_backend': 'b12x', 'extra_args': raw.replace('0', '1')}, hardware=MIXED)
+
+
+def test_vllm_device_ids_index_into_the_visible_mask():
+    # With a mask, vLLM reads --device-ids as positions within it: '1,0' then 1 -> GPU 0.
+    with pytest.raises(ValueError, match='SM120/SM121'):
+        check({'linear_backend': 'b12x', 'device_ids': '1,0', 'extra_args': '--device-ids 1'},
+              hardware=MIXED)
+    result = check({'linear_backend': 'b12x', 'device_ids': '0', 'extra_args': '--device-ids 1'},
+                   hardware=MIXED)
+    assert 'could not be verified' in result['linear_backend']['message']
+    result = check({'linear_backend': 'b12x', 'extra_args': '--device-ids GPU-abc'}, hardware=MIXED)
+    assert 'could not be verified' in result['linear_backend']['message']
+
+
+def test_vllm_device_ids_define_the_tensor_parallel_group():
+    with pytest.raises(ValueError, match='tensor parallel group'):
+        check({'linear_backend': 'b12x', 'tensor_parallel_size': 2,
+               'extra_args': '--device-ids 0,1'}, hardware=MIXED)
+
+
+@pytest.mark.parametrize('raw', ['--moe-backend B12X -ep', '--moe-backend b12x --enable-expert-parallel',
+                                 '--moe_backend=B12X --enable_expert_parallel'])
+def test_moe_backend_values_are_read_like_vllm(raw):
+    # vLLM lowercases --moe-backend/--linear-backend values and turns '-' into '_'.
+    with pytest.raises(ValueError, match='expert parallelism'):
+        check({'extra_args': raw}, capabilities={**CAPS, 'flags': None})
+    check({'extra_args': '--moe-backend B12X'},
+          capabilities={**CAPS, 'choices': {'--moe-backend': ['auto', 'b12x']}})
+
+
+def test_dashed_flashinfer_b12x_still_checks_gpu():
+    with pytest.raises(ValueError, match='SM120/SM121'):
+        check({'extra_args': '--linear-backend flashinfer-b12x'},
+              hardware={'gpus': [{'index': 0, 'compute_capability': '8.9'}]})
+
+
+@pytest.mark.parametrize('ids', ['1,', ' 1 ', '1, ', 1])
+def test_device_ids_parse_like_advisor(ids):
+    result = check({'linear_backend': 'b12x', 'device_ids': ids}, hardware=MIXED)
+    assert 'could not be verified' not in result['linear_backend']['message']
+
+
+def test_space_separated_device_ids_are_never_read_as_one_gpu():
+    # '0 1' is not a GPU list; CUDA would read only GPU 0 (the Ada card) from it.
+    result = check({'linear_backend': 'b12x', 'device_ids': '0 1'}, hardware=MIXED)
+    assert 'could not be verified' in result['linear_backend']['message']
+
+
+def test_integer_device_zero_is_a_selection_not_unset():
+    with pytest.raises(ValueError, match='SM120/SM121'):
+        check({'linear_backend': 'b12x', 'device_ids': 0},
+              hardware={**MIXED, 'cuda_visible_devices': '1'})
+
+
+@pytest.mark.parametrize('raw', ['--linear_backend b12x', '--linear_backend=b12x'])
+def test_underscore_spelling_is_selected_like_vllm_reads_it(raw):
+    assert backends.selected({'extra_args': raw})
+    with pytest.raises(ValueError, match='SM120/SM121'):
+        check({'extra_args': raw}, hardware={'gpus': [{'index': 0, 'compute_capability': '8.9'}]})
+
+
+@pytest.mark.parametrize('raw, match', [
+    ('--attention_backend B12X_ATTN', 'Select B12X'),
+    ('--attention_backend B12X --kv_cache_dtype nvfp4', 'cache'),
+    ('--attention_backend B12X --dtype=half', 'BF16'),
+    ('--moe_backend b12x --enable_expert_parallel', 'expert parallelism'),
+])
+def test_underscore_spelled_overrides_are_checked(raw, match):
+    with pytest.raises(ValueError, match=match):
+        check({'extra_args': raw})
+
+
+def test_underscore_tensor_parallel_override_is_checked():
+    with pytest.raises(ValueError, match='tensor parallel group'):
+        check({'linear_backend': 'b12x', 'device_ids': '0,1', 'tensor_parallel_size': 1,
+               'extra_args': '--tensor_parallel_size=2'}, hardware=MIXED)
+
+
+def test_release_note_spelling_error_wins_over_runtime_choices():
+    probed = {**CAPS, 'choices': {'--attention-backend': ['FLASH_ATTN', 'FLASHINFER', 'B12X']}}
+    with pytest.raises(ValueError, match='Select B12X'):
+        check({'attention_backend': 'B12X_ATTN'}, capabilities=probed)
+    with pytest.raises(ValueError, match='Select B12X'):
+        check({'extra_args': '--attention-backend B12X_ATTN'}, capabilities=probed)
+
+
+def test_vllm_device_ids_inside_a_container_are_unverified():
+    # A container renumbers its GPUs; the host's order cannot say which card index 1 is.
+    hw = backends.server_hardware('vllm-docker', MIXED)
+    result = check({'linear_backend': 'b12x', 'device_ids': '1,0', 'extra_args': '--device-ids 1'},
+                   hardware=hw)
+    assert 'could not be verified' in result['linear_backend']['message']

@@ -1,7 +1,10 @@
 """Download job progress and admission control."""
+import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from types import SimpleNamespace
+
+import pytest
 
 from local_llm_launcher import downloads
 
@@ -72,3 +75,25 @@ def test_concurrent_starts_obey_limit(monkeypatch):
         assert sum(isinstance(value, RuntimeError) for value in outcomes) == 1
     finally:
         worker_release.set()
+
+
+@pytest.mark.parametrize("files, total, skips_bin", [
+    ([("model.safetensors", 10), ("pytorch_model.bin", 10), ("config.json", 1)], 11, True),
+    ([("pytorch_model.bin", 10), ("config.json", 1)], 11, False),
+    # vLLM only reads top-level weights; a nested safetensors file is not a copy of them.
+    ([("pytorch_model.bin", 10), ("2_Dense/model.safetensors", 3)], 13, False),
+    ([("model.safetensors", 10), ("pytorch_model.bin", 10), ("2_Dense/pytorch_model.bin", 3)], 13, True),
+])
+def test_snapshot_skips_bin_copies_only_when_safetensors_exist(tmp_path, monkeypatch, files, total, skips_bin):
+    monkeypatch.setattr(downloads, "DEFAULT_HF_HUB", tmp_path)
+    monkeypatch.setattr(downloads, "repo_files", lambda *a, **k: {"files": [
+        {"filename": name, "size_bytes": size, "cache_key": name} for name, size in files]})
+    calls = []
+    monkeypatch.setattr(downloads, "snapshot_download", lambda **kwargs: calls.append(kwargs))
+    job = downloads.DownloadManager().start("org/model")
+    assert job.total_bytes == total
+    deadline = time.monotonic() + 5
+    while job.status == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert ("pytorch_model.bin" in calls[0]["ignore_patterns"]) is skips_bin

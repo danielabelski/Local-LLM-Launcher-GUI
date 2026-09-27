@@ -209,7 +209,7 @@
       "type": "string",
       "default": null,
       "category": "essential",
-      "help": "Comma-separated GPU numbers (e.g. '0,1' for both, '1' for just the second card). Useful to keep your monitor's GPU free. Leave empty to use all GPUs.",
+      "help": "Comma-separated GPU numbers as nvidia-smi lists them (e.g. '0,1' for both, '1' for just the second card). Useful to keep your monitor's GPU free. Leave empty to use all GPUs.",
       "env_var": "CUDA_VISIBLE_DEVICES"
     },
     {

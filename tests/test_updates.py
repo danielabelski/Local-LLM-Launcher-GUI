@@ -251,3 +251,15 @@ def test_failed_cleanup_preserves_selected_build(tmp_path):
     settings.update({'llamacpp_path': str(binary)})
     manager._clean_failed_build(build)
     assert binary.read_text() == 'selected installation'
+
+
+def test_version_check_allows_cold_engine_import(tmp_path, monkeypatch):
+    # A freshly built vLLM imports torch with a cold bytecode cache on first run.
+    manager = UpdateManager(Settings(tmp_path))
+    manager.job = {'log_path': str(tmp_path / 'build.log')}
+    timeouts = {}
+    monkeypatch.setattr(subprocess, 'run', lambda argv, **kw: timeouts.__setitem__(argv[-1], kw['timeout']))
+    manager._run(['/venv/bin/vllm', '--version'], tmp_path, {})
+    manager._run(['cmake', '--build'], tmp_path, {})
+    assert timeouts['--version'] >= 120
+    assert timeouts['--build'] == 7200
