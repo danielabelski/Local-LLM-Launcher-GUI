@@ -158,7 +158,7 @@ by a cryptic error.
   original vllm-cli works and exactly what changed here.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — technical deep dive:
   stack choices, module map, the advisor's memory math.
-- **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — granular history of what was
+- **[CHANGELOG.md](CHANGELOG.md)** — granular history of what was
   built and fixed, including real failures encountered on real hardware.
 - **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** — how to contribute,
   including a warm welcome to "vibe coders" (people contributing with the
