@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 from . import __version__, advisor, catalog, discovery, failures, hardware
 from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
+from .engines import vllm_backends, vllm_capabilities
 from .openwebui import OpenWebUIManager
 from .registry import ServerManager
 from .updates import UpdateManager
@@ -196,6 +198,15 @@ class AdviseRequest(BaseModel):
     config: Dict[str, Any] = {}
 
 
+def _backend_warnings(mode, model, config, hw):
+    if not mode.startswith("vllm") or not vllm_backends.selected(config):
+        return {}
+    evidence = vllm_capabilities.probe(mode, settings.data.get("vllm_path") or "vllm")
+    if mode != "vllm-docker":
+        hw = {**hw, "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES")}
+    return vllm_backends.check(config, model, hw, evidence)
+
+
 @router.post("/advise")
 def api_advise(body: AdviseRequest):
     model = find_model(body.repo_id)
@@ -203,7 +214,14 @@ def api_advise(body: AdviseRequest):
         from .engines.placement import validate
         hw = get_hardware()
         validate(body.engine_mode or body.engine, body.config, hw.get("numa"))
-        return advisor.advise(body.engine, model, body.config, hw)
+        warnings = _backend_warnings(body.engine_mode or body.engine, model, body.config, hw)
+        report = advisor.advise(body.engine, model, body.config, hw)
+        report["flags"].update(warnings)
+        if warnings:
+            if report["overall"]["level"] == "green":
+                report["overall"]["level"] = "yellow"
+            report["overall"]["details"].extend(w["message"] for w in warnings.values())
+        return report
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -232,6 +250,7 @@ def api_launch(body: LaunchRequest):
         raise HTTPException(400, "llama.cpp (llama-server) was not found on this computer. "
                                  "See Settings for install instructions.")
     try:
+        _backend_warnings(body.engine_mode, model, config, hw)
         srv = servers.launch(body.engine_mode, model, config,
                              llamacpp_binary=hw["engines"].get("llamacpp_path"),
                              vllm_binary=settings.data.get("vllm_path"))

@@ -12,6 +12,7 @@ from typing import Any, Dict
 
 from ._args import build_args_and_env
 from .placement import validate
+from . import vllm_backends, vllm_capabilities
 
 IMAGE = "vllm/vllm-openai:latest"
 HF_CACHE = os.path.expanduser("~/.cache/huggingface")
@@ -28,6 +29,8 @@ def _write_env_file(env: Dict[str, str]) -> str:
 
 def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     validate("vllm-docker", config)
+    if vllm_backends.selected(config):
+        vllm_backends.check(config, model, capabilities=vllm_capabilities.probe("vllm-docker"))
     # Build vLLM flags with the *container* port, not the host port.
     container_cfg = dict(config)
     host_port = int(config.get("port", 8000))

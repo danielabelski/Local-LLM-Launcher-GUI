@@ -242,6 +242,59 @@
       "category": "advanced",
       "advanced": true,
       "help": "Any additional vLLM command-line flags, exactly as you'd type them in a terminal. For experts; the app passes them through unchanged."
+    },
+    {
+      "key": "linear_backend",
+      "flag": "--linear-backend",
+      "label": "Linear computation backend",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        null,
+        "flashinfer_cutlass",
+        "flashinfer_b12x",
+        "b12x",
+        "marlin",
+        "triton",
+        "torch"
+      ],
+      "category": "performance",
+      "advanced": true,
+      "help": "Implementation for matrix calculations. Automatic lets vLLM choose for the model. b12x requires the optional vllm[b12x] package; b12x and flashinfer_b12x target SM120/SM121 GPUs (including RTX 5060 Ti). Compatible NVFP4 models can benefit automatically in vLLM 0.30; overrides do not guarantee faster performance."
+    },
+    {
+      "key": "moe_backend",
+      "flag": "--moe-backend",
+      "label": "MoE expert computation backend",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        null,
+        "flashinfer_cutlass",
+        "flashinfer_b12x",
+        "b12x",
+        "marlin",
+        "triton"
+      ],
+      "category": "performance",
+      "advanced": true,
+      "help": "Implementation for mixture-of-experts models (models that select specialized expert networks). b12x requires vllm[b12x], an SM120/SM121 GPU and compatible NVFP4 or MXFP4 expert weights. It does not support expert parallelism (distributing experts across workers). Leave automatic unless comparing compatible implementations."
+    },
+    {
+      "key": "attention_backend",
+      "flag": "--attention-backend",
+      "label": "Attention computation backend",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        null,
+        "FLASH_ATTN",
+        "FLASHINFER",
+        "B12X"
+      ],
+      "category": "performance",
+      "advanced": true,
+      "help": "Implementation for attention (connecting tokens to earlier context). B12X requires vllm[b12x], an SM120/SM121 GPU, BF16 model computation and automatic/BF16 or FP8 E4M3 KV cache (stored attention data). Context parallelism and latent attention models are unsupported. Automatic preserves engine selection."
     }
   ]
 }

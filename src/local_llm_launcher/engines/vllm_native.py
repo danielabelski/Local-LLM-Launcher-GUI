@@ -9,10 +9,13 @@ from typing import Any, Dict
 
 from ._args import build_args_and_env
 from .placement import validate, wrap
+from . import vllm_backends, vllm_capabilities
 
 
 def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "vllm") -> Dict[str, Any]:
     validate("vllm-native", config)
+    if vllm_backends.selected(config):
+        vllm_backends.check(config, model, capabilities=vllm_capabilities.probe("vllm-native", binary))
     flags, env, extra = build_args_and_env("vllm", config)
     port = int(config.get("port", 8000))
     host = config.get("host", "127.0.0.1")
