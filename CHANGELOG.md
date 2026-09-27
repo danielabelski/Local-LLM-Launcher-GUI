@@ -3,6 +3,40 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
+## Unreleased — open issue pass, September 2026
+
+### Added
+
+- Explicit, isolated source builds for official llama.cpp and native vLLM on
+  supported Linux systems. Settings shows prerequisites, exact source revision,
+  progress, and logs. Failed builds preserve the previous executable; running
+  servers are unaffected.
+- llama.cpp device selection, proportional GPU splitting, main-GPU selection,
+  and experimental tensor split mode with compatibility checks.
+- MoE expert placement in RAM (`--cpu-moe`, `--n-cpu-moe`), microbatch size,
+  and optional NUMA thread placement. Native engines can optionally run under
+  `numactl --interleave=all` for memory distribution across allowed nodes.
+- Compatibility translation for legacy memory-loading controls on newer
+  llama.cpp binaries that use `--load-mode`.
+
+### Fixed
+
+- Default-on vLLM prefix caching and chunked prefill can be explicitly disabled.
+- Saved Hugging Face tokens can be preserved, replaced, and cleared without
+  accidentally saving their display mask.
+- Tests isolate application state before importing the API.
+- Settings are written atomically with private permissions; unknown API routes
+  return JSON errors, and malformed upstream chat responses return a gateway
+  error.
+- Failed launches retain logs; concurrent launches reserve their ports, and
+  download concurrency limits are synchronized.
+- Download progress counts only requested files; completed jobs trigger one
+  model scan instead of repeated scans.
+- Breadcrumb text, used VRAM display, live hardware polling, and Refresh
+  busy/success/error feedback now match the actual state.
+- Source-build llama.cpp discovery has its documented priority. Duplicate
+  changelog content and unused code were removed.
+
 ## 2026-08-11 — v0.3.1
 
 ### Fixed: server lifecycle and loopback binding (issues 1–6)

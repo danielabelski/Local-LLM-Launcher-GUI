@@ -23,7 +23,7 @@
       "max": 262144,
       "step": 1024,
       "category": "essential",
-      "help": "How much text (in tokens — roughly 3/4 of a word each) the model can keep in mind at once. Bigger needs more memory. 8192 is plenty for chat."
+      "help": "How much text (in tokens \u2014 roughly 3/4 of a word each) the model can keep in mind at once. Bigger needs more memory. 8192 is plenty for chat."
     },
     {
       "key": "n_gpu_layers",
@@ -34,7 +34,7 @@
       "min": 0,
       "max": 999,
       "category": "essential",
-      "help": "How many of the model's layers run on the GPU instead of the CPU. Leave empty for automatic — recent llama.cpp measures your GPU and fits as many as possible. Set 999 to force everything onto the GPU, or 0 for CPU only."
+      "help": "How many of the model's layers run on the GPU instead of the CPU. Leave empty for automatic \u2014 recent llama.cpp measures your GPU and fits as many as possible. Set 999 to force everything onto the GPU, or 0 for CPU only."
     },
     {
       "key": "threads",
@@ -53,7 +53,11 @@
       "label": "Flash attention",
       "type": "choice",
       "default": "auto",
-      "choices": ["auto", "on", "off"],
+      "choices": [
+        "auto",
+        "on",
+        "off"
+      ],
       "category": "performance",
       "help": "A faster, more memory-efficient way to compute attention (the model's core math). 'auto' enables it when your hardware supports it."
     },
@@ -63,9 +67,15 @@
       "label": "Conversation memory compression (keys)",
       "type": "choice",
       "default": "f16",
-      "choices": ["f16", "q8_0", "q4_0"],
+      "choices": [
+        "f16",
+        "bf16",
+        "f32",
+        "q8_0",
+        "q4_0"
+      ],
       "category": "performance",
-      "help": "Compresses half of the conversation memory (the 'K' cache). q8_0 halves it with minimal quality loss — useful for long contexts on small GPUs."
+      "help": "Compresses half of the conversation memory (the 'K' cache). q8_0 halves it with minimal quality loss \u2014 useful for long contexts on small GPUs."
     },
     {
       "key": "cache_type_v",
@@ -73,7 +83,13 @@
       "label": "Conversation memory compression (values)",
       "type": "choice",
       "default": "f16",
-      "choices": ["f16", "q8_0", "q4_0"],
+      "choices": [
+        "f16",
+        "bf16",
+        "f32",
+        "q8_0",
+        "q4_0"
+      ],
       "category": "performance",
       "help": "Compresses the other half of the conversation memory (the 'V' cache). Usually set to match the K cache setting. Requires flash attention on."
     },
@@ -126,10 +142,15 @@
       "label": "Multi-GPU split style",
       "type": "choice",
       "default": "layer",
-      "choices": ["layer", "row", "none"],
+      "choices": [
+        "layer",
+        "row",
+        "none",
+        "tensor"
+      ],
       "category": "advanced",
       "advanced": true,
-      "help": "How the model is divided across multiple GPUs. 'layer' (whole layers per GPU) is the safe default. 'none' uses only the main GPU."
+      "help": "Layer splits whole layers and their KV cache (conversation memory) across GPUs. Row is deprecated and keeps KV on the main GPU. None uses only the main GPU. Tensor is experimental, splits tensors across cards, disables automatic fitting, and does not support several MoE/hybrid architectures."
     },
     {
       "key": "no_kv_offload",
@@ -139,7 +160,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Forces the conversation memory (KV cache) into system RAM instead of the GPU. WARNING: this causes a severe speed hit — often 20–50% slower at moderate context, and 2× or worse at long context — because the GPU has to fetch prior-token data across the PCIe slot on every generated word. Only use this if the model fits on the GPU but the KV cache doesn't, and you've already tried compressing conversation memory (cache-type-k/v)."
+      "help": "Forces the conversation memory (KV cache) into system RAM instead of the GPU. WARNING: this causes a severe speed hit \u2014 often 20\u201350% slower at moderate context, and 2\u00d7 or worse at long context \u2014 because the GPU has to fetch prior-token data across the PCIe slot on every generated word. Only use this if the model fits on the GPU but the KV cache doesn't, and you've already tried compressing conversation memory (cache-type-k/v)."
     },
     {
       "key": "no_mmproj",
@@ -157,7 +178,7 @@
       "type": "bool",
       "default": true,
       "category": "essential",
-      "help": "Formats conversations the exact way the model was trained to expect (using the template embedded in the model file). Leave on — turning it off often causes weird replies."
+      "help": "Formats conversations the exact way the model was trained to expect (using the template embedded in the model file). Leave on \u2014 turning it off often causes weird replies."
     },
     {
       "key": "alias",
@@ -176,6 +197,95 @@
       "default": null,
       "category": "api",
       "help": "If set, apps must send this key to use the server. Recommended if other devices on your network can reach this computer."
+    },
+    {
+      "key": "device",
+      "flag": "--device",
+      "label": "Participating GPU devices",
+      "type": "string",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Comma-separated llama.cpp backend names, such as CUDA0,CUDA1. Use names detected below; these are not necessarily NVIDIA card indexes. Leave unset for engine selection."
+    },
+    {
+      "key": "tensor_split",
+      "flag": "--tensor-split",
+      "label": "GPU split proportions",
+      "type": "string",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Relative weights, not exact layer counts: 40,40,40 gives three equal shares; 2,1 requests twice as much on the first device. Provide one positive number per selected device. Per-card fit is not guaranteed."
+    },
+    {
+      "key": "main_gpu",
+      "flag": "--main-gpu",
+      "label": "Main GPU index",
+      "type": "int",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Index in llama.cpp\u2019s selected device list. Used by none mode, or for KV cache in deprecated row mode; ignored by layer mode.",
+      "min": 0
+    },
+    {
+      "key": "cpu_moe",
+      "flag": "--cpu-moe",
+      "label": "All MoE experts in CPU RAM",
+      "type": "bool",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "MoE (mixture of experts) models activate selected subnetworks per token. Keep all expert weights in system RAM to save GPU memory, potentially reducing speed. Do not combine with a positive CPU expert layer count."
+    },
+    {
+      "key": "n_cpu_moe",
+      "flag": "--n-cpu-moe",
+      "label": "CPU expert layer count",
+      "type": "int",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Keep expert weights of the first N layers in CPU RAM. Lower N moves more experts toward the GPU when GPU layers allow it; higher N saves GPU memory but can slow generation. Exact savings depend on the model.",
+      "min": 0
+    },
+    {
+      "key": "ubatch_size",
+      "flag": "--ubatch-size",
+      "label": "Physical prompt microbatch",
+      "type": "int",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Tokens processed together inside a prompt batch. Smaller groups reduce temporary memory needs, often at the cost of prompt processing speed.",
+      "min": 1
+    },
+    {
+      "key": "numa",
+      "flag": "--numa",
+      "label": "CPU NUMA placement",
+      "type": "choice",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "NUMA (non-uniform memory access) means CPUs reach nearby memory faster. Distribute spreads threads over visible nodes; isolate keeps threads on the starting node; numactl respects a CPU map set externally. Optional on multi-socket hosts; no cross-node benefit with one visible node.",
+      "choices": [
+        null,
+        "distribute",
+        "isolate",
+        "numactl"
+      ]
+    },
+    {
+      "key": "numactl_interleave",
+      "flag": null,
+      "label": "Interleave memory across NUMA nodes",
+      "type": "bool",
+      "default": false,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Linux native engines only. Runs numactl --interleave=all to spread memory allocations across allowed nodes. This changes memory placement, not CPU affinity (where threads run). Benchmark on multi-node machines; no cross-node benefit with one node."
     },
     {
       "key": "extra_args",

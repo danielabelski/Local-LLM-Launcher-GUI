@@ -125,6 +125,68 @@ To stop the app, go back to the terminal window and press `Ctrl+C`.
    folders, or fix the path to `llama-server` if it wasn't found
    automatically.
 
+## Advanced hardware controls
+
+For llama.cpp, the advanced launch settings include:
+
+- **GPU selection and proportions:** select the engine's device names and set
+  `--tensor-split`, for example `3,1` for unequal cards or `40,40,40` for equal
+  shares on three cards. These are proportions, not exact layer counts.
+  `--split-mode layer` distributes layers and their conversation memory (KV
+  cache) across the cards. The older `row` mode keeps KV on the main GPU;
+  experimental `tensor` mode has additional model and cache restrictions.
+- **MoE expert placement:** `--cpu-moe` keeps all experts (the selectively used
+  parts of a mixture-of-experts model) in RAM. `--n-cpu-moe N` keeps experts
+  from the first N layers in RAM; reducing N lets more live on the GPU.
+  Transfers between RAM and GPU can reduce speed. These controls cannot promise
+  a precise memory fit without knowing the model's individual tensor sizes.
+- **Microbatch size:** `--ubatch-size` limits how many tokens are processed
+  together within a batch. Smaller values may reduce working memory at a speed
+  cost.
+- **NUMA:** on machines with multiple CPU/memory locality groups,
+  `--numa distribute` spreads llama.cpp threads across nodes; `isolate` uses the
+  startup node; `numactl` respects CPU placement arranged externally. The
+  separate **Interleave memory** option wraps native llama.cpp or vLLM with
+  `numactl --interleave=all`. It spreads memory allocations across allowed
+  nodes and does not itself bind CPU threads. It requires Linux and `numactl`
+  and does not apply to Docker launches.
+
+NUMA options are off by default. They support ordinary multi-CPU computers as
+well as VMs; recommendations use the nodes visible and allowed to the app.
+A VM exposing one node cannot use these options to distribute work across
+hidden host nodes. There is no automatic change to host configuration or system
+page caches. Benchmark your workload before retaining a NUMA setting.
+
+The existing memory-mapping and RAM-lock controls are translated to the newer
+`--load-mode` syntax when the selected llama.cpp binary supports it. Older
+binaries keep their legacy flags. Other advanced flags still depend on your
+installed engine version; failed launches retain their logs for diagnosis.
+
+The video linked in [issue #15](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/issues/15)
+also uses a modified llama.cpp fork. Its expert prefetch/pinning optimizations
+are not stock flags, and this launcher does not promise that video's speedup.
+
+## Updating an engine from source
+
+In **Settings → Build current engine source**, check requirements, inspect the
+target commit (an exact source revision), then explicitly choose to build it.
+Nothing is downloaded or upgraded automatically. Supported recipes are Linux
+llama.cpp CPU/CUDA and Linux native vLLM with NVIDIA CUDA prerequisites.
+Other platforms and Docker installations keep their manual installation path.
+
+Builds download official upstream source and dependencies into separate folders
+under the app data directory. Current source may contain unreleased changes.
+Prerequisites and free disk space are checked before starting; compiler jobs
+are limited to reduce CPU and memory pressure. Progress, recent output, and
+failures appear in Settings. Only a validated executable is selected for future
+launches. Running servers keep their existing executable, and older copies are
+retained. You can restore an older executable path in Settings.
+
+Use a browser directly on the launcher computer for these update controls.
+An interrupted build leaves the previous engine selected; its partial files
+may remain in the app data directory. The launcher must stay open to finish a
+build and select its result.
+
 ## What "Fit / Tight / Won't fit" means
 
 The app adds up how much memory (VRAM, on a GPU) a model needs — its weights,
@@ -158,7 +220,7 @@ by a cryptic error.
   original vllm-cli works and exactly what changed here.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — technical deep dive:
   stack choices, module map, the advisor's memory math.
-- **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — granular history of what was
+- **[CHANGELOG.md](CHANGELOG.md)** — granular history of what was
   built and fixed, including real failures encountered on real hardware.
 - **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** — how to contribute,
   including a warm welcome to "vibe coders" (people contributing with the

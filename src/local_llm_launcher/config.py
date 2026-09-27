@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -11,6 +13,7 @@ DEFAULTS: Dict[str, Any] = {
     "hf_token": None,
     "gguf_folders": [],
     "llamacpp_path": None,
+    "vllm_path": None,
     "lan_access": False,
 }
 
@@ -20,6 +23,7 @@ class Settings:
         from .registry import APP_DIR
         self.app_dir = Path(app_dir) if app_dir else APP_DIR
         self.path = self.app_dir / "settings.json"
+        self._lock = threading.RLock()
         self.app_dir.mkdir(parents=True, exist_ok=True)
         self.data: Dict[str, Any] = dict(DEFAULTS)
         self._load()
@@ -34,15 +38,26 @@ class Settings:
                 pass
 
     def save(self) -> None:
-        fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(self.data, indent=2))
+        with self._lock:
+            fd, name = tempfile.mkstemp(dir=self.app_dir, prefix=".settings-", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self.data, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(name, self.path)
+            finally:
+                Path(name).unlink(missing_ok=True)
 
     def update(self, changes: Dict[str, Any]) -> None:
-        for key in DEFAULTS:
-            if key in changes:
-                self.data[key] = changes[key]
-        self.save()
+        with self._lock:
+            previous = self.data
+            self.data = {**previous, **{k: v for k, v in changes.items() if k in DEFAULTS}}
+            try:
+                self.save()
+            except Exception:
+                self.data = previous
+                raise
 
     def public(self) -> Dict[str, Any]:
         """Settings safe to send to the browser — token masked."""

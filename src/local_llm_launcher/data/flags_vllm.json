@@ -116,6 +116,7 @@
     {
       "key": "enable_prefix_caching",
       "flag": "--enable-prefix-caching",
+      "negative_flag": "--no-enable-prefix-caching",
       "label": "Reuse repeated prompts",
       "type": "bool",
       "default": true,
@@ -125,6 +126,7 @@
     {
       "key": "enable_chunked_prefill",
       "flag": "--enable-chunked-prefill",
+      "negative_flag": "--no-enable-chunked-prefill",
       "label": "Smooth long-prompt processing",
       "type": "bool",
       "default": true,
@@ -220,6 +222,16 @@
       "secret": true,
       "help": "Needed only for gated models (like Llama) that require accepting a license on huggingface.co first. Create one at huggingface.co/settings/tokens.",
       "env_var": "HF_TOKEN"
+    },
+    {
+      "key": "numactl_interleave",
+      "flag": null,
+      "label": "Interleave memory across NUMA nodes",
+      "type": "bool",
+      "default": false,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Linux native engines only. Runs numactl --interleave=all to spread memory allocations across allowed nodes. This changes memory placement, not CPU affinity (where threads run). Benchmark on multi-node machines; no cross-node benefit with one node."
     },
     {
       "key": "extra_args",

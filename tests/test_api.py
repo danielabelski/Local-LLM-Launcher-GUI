@@ -59,6 +59,40 @@ def test_settings_roundtrip_masks_token(client):
     assert "hf_token_set" in r2.json()
 
 
+@pytest.mark.parametrize("method", ["put", "patch"])
+def test_settings_token_preserve_replace_and_clear(client, method):
+    import local_llm_launcher.api as api
+    save = getattr(client, method)
+    assert save("/api/settings", json={"hf_token": "hf_example"}).json()["hf_token"] == "********"
+    save("/api/settings", json={"gguf_folders": []})
+    assert api.settings.data["hf_token"] == "hf_example"
+    save("/api/settings", json={"hf_token": "********"})
+    assert api.settings.data["hf_token"] == "hf_example"
+    assert save("/api/settings", json={"hf_token": None}).json()["hf_token_set"] is False
+    assert api.settings.data["hf_token"] is None
+
+
+def test_settings_patch_validates_types(client):
+    assert client.patch("/api/settings", json={"gguf_folders": "not-a-list"}).status_code == 422
+
+
+def test_unknown_api_is_json_404(client):
+    response = client.get("/api/no-such-endpoint")
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+
+
+@pytest.mark.parametrize("payload", [{}, {"choices": []}, {"choices": [{"message": None}]}])
+def test_chat_malformed_upstream_is_502(client, monkeypatch, payload):
+    import local_llm_launcher.api as api
+    from types import SimpleNamespace
+    monkeypatch.setattr(api.servers, "get", lambda _: SimpleNamespace(
+        is_running=lambda: True, port=8000, model_label="test"))
+    monkeypatch.setattr(api.httpx, "post", lambda *a, **k: SimpleNamespace(
+        raise_for_status=lambda: None, json=lambda: payload))
+    assert client.post("/api/servers/test/chat", json={"messages": []}).status_code == 502
+
+
 def test_settings_roundtrip_lan_access_toggle(client):
     r = client.patch("/api/settings", json={"lan_access": True})
     assert r.status_code == 200
@@ -75,7 +109,7 @@ def test_launch_injects_loopback_host_by_default(client, monkeypatch):
     monkeypatch.setattr(api, "find_model", lambda repo_id: {**FAKE_MODEL, "repo_id": repo_id})
     monkeypatch.setattr(api, "get_hardware", lambda: {"engines": {"llamacpp_path": None, "vllm_native": True}})
     monkeypatch.setattr(api.servers, "launch",
-                        lambda mode, model, config, llamacpp_binary=None: _record(captured, mode, config))
+                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None: _record(captured, mode, config))
 
     client.patch("/api/settings", json={"lan_access": False})
     client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "org/model-8B", "config": {}})
@@ -89,7 +123,7 @@ def test_launch_injects_lan_host_when_enabled(client, monkeypatch):
     monkeypatch.setattr(api, "find_model", lambda repo_id: {**FAKE_MODEL, "repo_id": repo_id})
     monkeypatch.setattr(api, "get_hardware", lambda: {"engines": {"llamacpp_path": None, "vllm_native": True}})
     monkeypatch.setattr(api.servers, "launch",
-                        lambda mode, model, config, llamacpp_binary=None: _record(captured, mode, config))
+                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None: _record(captured, mode, config))
 
     client.patch("/api/settings", json={"lan_access": True})
     client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "org/model-8B", "config": {}})
@@ -131,6 +165,20 @@ def test_launch_validates_engine(client):
 def test_stop_unknown_server_is_404(client):
     r = client.post("/api/servers/no-such-id/stop")
     assert r.status_code == 404
+
+
+def test_remove_failure_retains_server_and_reports_conflict(client, monkeypatch):
+    import local_llm_launcher.api as api
+
+    monkeypatch.setattr(api.servers, "get", lambda server_id: object())
+    monkeypatch.setattr(api.servers, "remove", lambda server_id: False)
+    response = client.delete("/api/servers/known")
+    assert response.status_code == 409
+    assert "retained" in response.json()["detail"]
+
+
+def test_remove_unknown_server_is_404(client):
+    assert client.delete("/api/servers/no-such-id").status_code == 404
 
 
 def test_stop_failure_is_not_404(client, monkeypatch):

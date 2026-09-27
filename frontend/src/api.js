@@ -16,6 +16,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  checkUpdate: (engine) => request(`/api/updates/check/${engine}`, { method: 'POST' }),
+  startUpdate: (checkId) => request('/api/updates', { method: 'POST', body: JSON.stringify({ check_id: checkId }) }),
+  updateStatus: () => request('/api/updates'),
   hardware: () => request('/api/hardware'),
   about: () => request('/api/about'),
   models: () => request('/api/models'),
@@ -25,8 +28,8 @@ export const api = {
     request('/api/downloads', { method: 'POST', body: JSON.stringify({ repo_id: repoId, filename }) }),
   downloads: () => request('/api/downloads'),
   catalog: (engine) => request(`/api/catalog/${engine}`),
-  advise: (engine, repoId, config) =>
-    request('/api/advise', { method: 'POST', body: JSON.stringify({ engine, repo_id: repoId, config }) }),
+  advise: (engine, repoId, config, engineMode) =>
+    request('/api/advise', { method: 'POST', body: JSON.stringify({ engine, repo_id: repoId, config, engine_mode: engineMode }) }),
   presets: (engine, repoId) =>
     request(`/api/presets?engine=${engine}&repo_id=${encodeURIComponent(repoId)}`),
   launch: (engineMode, repoId, config) =>

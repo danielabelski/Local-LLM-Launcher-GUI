@@ -6,6 +6,7 @@ by Chen-zexi, MIT license.
 from __future__ import annotations
 
 import importlib.util
+from functools import lru_cache
 import os
 import platform
 import shutil
@@ -49,6 +50,8 @@ class Hardware:
     disk_free_gb: float
     engines: EngineAvailability
     notes: List[str] = field(default_factory=list)
+    numa: Dict[str, Any] = field(default_factory=dict)
+    llama_devices: List[Dict[str, str]] = field(default_factory=list)
 
     @property
     def total_vram_mb(self) -> int:
@@ -87,6 +90,8 @@ class Hardware:
             "engines": vars(self.engines),
             "summary": self.summary(),
             "notes": self.notes,
+            "numa": self.numa,
+            "llama_devices": self.llama_devices,
         }
 
 
@@ -202,16 +207,19 @@ _LLAMA_LOCATIONS = [
 def find_llamacpp(extra_path: Optional[str] = None) -> Optional[str]:
     if extra_path and os.path.isfile(extra_path) and os.access(extra_path, os.X_OK):
         return extra_path
+    for candidate in _LLAMA_LOCATIONS[:3]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     found = shutil.which("llama-server")
     if found:
         return found
-    for candidate in _LLAMA_LOCATIONS:
+    for candidate in _LLAMA_LOCATIONS[3:]:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
 
 
-def detect_hardware(llamacpp_hint: Optional[str] = None) -> Hardware:
+def detect_hardware(llamacpp_hint: Optional[str] = None, vllm_hint: Optional[str] = None) -> Hardware:
     """Detect everything. Must never raise — degrade gracefully on any failure."""
     notes: List[str] = []
     try:
@@ -233,7 +241,8 @@ def detect_hardware(llamacpp_hint: Optional[str] = None) -> Hardware:
         disk_free_gb = 0.0
 
     engines = EngineAvailability(
-        vllm_native=_vllm_native_available(),
+        vllm_native=(bool(vllm_hint and os.path.isfile(vllm_hint) and os.access(vllm_hint, os.X_OK))
+                     if vllm_hint else _vllm_native_available()),
         vllm_docker=_vllm_docker_available(),
         llamacpp_path=find_llamacpp(llamacpp_hint),
     )
@@ -248,4 +257,66 @@ def detect_hardware(llamacpp_hint: Optional[str] = None) -> Hardware:
         disk_free_gb=disk_free_gb,
         engines=engines,
         notes=notes,
+        numa=detect_numa(),
+        llama_devices=llama_capabilities(engines.llamacpp_path)["devices"] if engines.llamacpp_path else [],
     )
+
+
+def _node_set(value: str) -> set[int]:
+    nodes = set()
+    for part in value.strip().split(','):
+        bounds = [int(n) for n in part.split('-')]
+        if len(bounds) > 2 or min(bounds) < 0 or max(bounds) > 65535:
+            raise ValueError('Invalid node list')
+        nodes.update(range(bounds[0], bounds[-1] + 1))
+    return nodes
+
+
+def detect_numa(online=None, status=None) -> Dict[str, Any]:
+    from pathlib import Path
+    linux = platform.system() == 'Linux'
+    nodes = None
+    if linux:
+        try:
+            visible = _node_set(Path(online or '/sys/devices/system/node/online').read_text())
+            lines = Path(status or '/proc/self/status').read_text().splitlines()
+            allowed = next(line.split(':', 1)[1] for line in lines if line.startswith('Mems_allowed_list:'))
+            nodes = sorted(visible & _node_set(allowed))
+        except (OSError, ValueError, StopIteration):
+            pass
+    return {'nodes': nodes, 'node_count': len(nodes) if nodes is not None else None,
+            'numactl_path': shutil.which('numactl') if linux else None, 'linux': linux}
+
+
+@lru_cache(maxsize=16)
+def _llama_capabilities_cached(binary: str, mtime: int) -> Dict[str, Any]:
+    import re
+    result = {'load_mode': False, 'devices': []}
+    env = dict(os.environ)
+    directory = os.path.dirname(binary)
+    if directory:
+        env['LD_LIBRARY_PATH'] = directory + os.pathsep + env.get('LD_LIBRARY_PATH', '')
+    for option in ('--help', '--list-devices'):
+        try:
+            out = subprocess.run([binary, option], capture_output=True, text=True, timeout=8, env=env)
+            if out.returncode != 0:
+                continue
+            output = out.stdout + '\n' + out.stderr
+            if option == '--help':
+                result['load_mode'] = bool(re.search(r'(?<![\w-])--load-mode(?=\s|=|$)', output))
+            else:
+                result['devices'] = [{'name': m.group(1), 'description': m.group(2)}
+                                     for line in output.splitlines()
+                                     if (m := re.match(r'^\s*([A-Za-z][A-Za-z0-9_]*\d+):\s+(.+)$', line))]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return result
+
+
+def llama_capabilities(binary: str) -> Dict[str, Any]:
+    resolved = shutil.which(binary) or binary
+    try:
+        stamp = os.stat(resolved).st_mtime_ns
+    except OSError:
+        stamp = 0
+    return _llama_capabilities_cached(resolved, stamp)

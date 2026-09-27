@@ -1,23 +1,26 @@
 """REST API for the GUI."""
 from __future__ import annotations
 
+import ipaddress
 import threading
 import time
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from . import __version__, advisor, catalog, discovery, failures, hardware
 from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
 from .openwebui import OpenWebUIManager
 from .registry import ServerManager
+from .updates import UpdateManager
 
 router = APIRouter(prefix="/api")
 
 settings = Settings()
+updates = UpdateManager(settings)
 servers = ServerManager()
 downloads = DownloadManager()
 openwebui = OpenWebUIManager()
@@ -28,11 +31,14 @@ _hw_lock = threading.Lock()
 
 def get_hardware(max_age: float = 5.0) -> Dict[str, Any]:
     now = time.time()
+    paths = (settings.data.get("llamacpp_path"), settings.data.get("vllm_path"))
     with _hw_lock:
-        if _hw_cache["data"] is None or now - _hw_cache["at"] > max_age:
-            hw = hardware.detect_hardware(llamacpp_hint=settings.data.get("llamacpp_path"))
+        if _hw_cache.get("paths") != paths or _hw_cache["data"] is None or now - _hw_cache["at"] > max_age:
+            hw = hardware.detect_hardware(llamacpp_hint=settings.data.get("llamacpp_path"),
+                                          vllm_hint=settings.data.get("vllm_path"))
             _hw_cache["data"] = hw.to_dict()
             _hw_cache["at"] = now
+            _hw_cache["paths"] = paths
         return _hw_cache["data"]
 
 
@@ -92,42 +98,21 @@ def api_get_settings():
 
 class SettingsUpdate(BaseModel):
     hf_token: Optional[str] = None
-    gguf_folders: Optional[List[str]] = None
+    gguf_folders: List[str] = Field(default_factory=list)
     llamacpp_path: Optional[str] = None
-    lan_access: Optional[bool] = None
-
-
-_UNSET = object()
-
-
-class SettingsPatch(BaseModel):
-    hf_token: Optional[str] = _UNSET
-    gguf_folders: Optional[List[str]] = _UNSET
-    llamacpp_path: Optional[str] = _UNSET
-    lan_access: Optional[bool] = _UNSET
+    vllm_path: Optional[str] = None
+    lan_access: bool = False
 
 
 @router.put("/settings")
+@router.patch("/settings")
 def api_put_settings(body: SettingsUpdate):
-    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    changes = body.model_dump(exclude_unset=True)
     if changes.get("hf_token") == "********":
         changes.pop("hf_token")  # masked value bounced back — keep stored token
     settings.update(changes)
-    _hw_cache["data"] = None  # llamacpp_path may have changed
-    return settings.public()
-
-
-@router.patch("/settings")
-def api_patch_settings(body: Dict[str, Any]):
-    changes = {}
-    for key in ("hf_token", "gguf_folders", "llamacpp_path", "lan_access"):
-        if key in body:
-            val = body[key]
-            if key == "hf_token" and val == "********":
-                continue  # masked value bounced back
-            changes[key] = val
-    settings.update(changes)
-    _hw_cache["data"] = None
+    with _hw_lock:
+        _hw_cache["data"] = None  # llamacpp_path may have changed
     return settings.public()
 
 
@@ -206,6 +191,7 @@ def api_catalog(engine: str):
 
 class AdviseRequest(BaseModel):
     engine: str  # "vllm" | "llamacpp"
+    engine_mode: Optional[str] = None
     repo_id: str
     config: Dict[str, Any] = {}
 
@@ -214,7 +200,10 @@ class AdviseRequest(BaseModel):
 def api_advise(body: AdviseRequest):
     model = find_model(body.repo_id)
     try:
-        return advisor.advise(body.engine, model, body.config, get_hardware())
+        from .engines.placement import validate
+        hw = get_hardware()
+        validate(body.engine_mode or body.engine, body.config, hw.get("numa"))
+        return advisor.advise(body.engine, model, body.config, hw)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -244,8 +233,9 @@ def api_launch(body: LaunchRequest):
                                  "See Settings for install instructions.")
     try:
         srv = servers.launch(body.engine_mode, model, config,
-                             llamacpp_binary=hw["engines"].get("llamacpp_path"))
-    except RuntimeError as e:
+                             llamacpp_binary=hw["engines"].get("llamacpp_path"),
+                             vllm_binary=settings.data.get("vllm_path"))
+    except (RuntimeError, ValueError) as e:
         raise HTTPException(400, str(e))
     return srv.status()
 
@@ -296,6 +286,8 @@ def api_server_stop(server_id: str):
 @router.delete("/servers/{server_id}")
 def api_server_remove(server_id: str):
     if not servers.remove(server_id):
+        if servers.get(server_id) is not None:
+            raise HTTPException(409, "The server didn't stop; its record and logs were retained. Check its log for errors.")
         raise HTTPException(404, "No such server.")
     return {"ok": True}
 
@@ -327,6 +319,8 @@ def api_chat(server_id: str, body: ChatRequest):
                 "reasoning": msg.get("reasoning_content") or ""}
     except httpx.HTTPError as e:
         raise HTTPException(502, f"The model server didn't answer: {e}")
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise HTTPException(502, "The model server returned an invalid chat response.")
 
 
 # --------------------------------------------------------------- Open WebUI
@@ -356,3 +350,44 @@ def api_openwebui_launch():
 def api_openwebui_stop():
     openwebui.stop()
     return openwebui.status()
+
+
+# Source builds are local administrative actions, never LAN/proxy operations.
+def _require_local_update(request: Request):
+    try:
+        local = request.client and ipaddress.ip_address(request.client.host).is_loopback
+    except ValueError:
+        local = False
+    if not local or any(name in request.headers for name in
+                        ("forwarded", "x-forwarded-for", "x-real-ip")):
+        raise HTTPException(403, "Engine updates require a direct connection from this computer.")
+
+
+@router.get("/updates")
+def api_update_status(request: Request):
+    _require_local_update(request)
+    return updates.status()
+
+
+@router.post("/updates/check/{engine}")
+def api_update_check(engine: str, request: Request):
+    _require_local_update(request)
+    try:
+        return updates.check(engine)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+class UpdateRequest(BaseModel):
+    check_id: str
+
+
+@router.post("/updates")
+def api_start_update(body: UpdateRequest, request: Request):
+    _require_local_update(request)
+    try:
+        return updates.start(body.check_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))

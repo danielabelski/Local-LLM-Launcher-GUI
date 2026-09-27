@@ -8,17 +8,19 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ._args import build_args_and_env
+from .placement import validate, wrap
 
 
-def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "vllm") -> Dict[str, Any]:
+    validate("vllm-native", config)
     flags, env, extra = build_args_and_env("vllm", config)
     port = int(config.get("port", 8000))
     host = config.get("host", "127.0.0.1")
-    argv = (["vllm", "serve", model["repo_id"]]
+    argv = ([binary, "serve", model["repo_id"]]
             + (["--host", host] if host else [])
             + flags + extra)
     return {
-        "argv": argv,
+        "argv": wrap(argv, config),
         "env": env,
         "port": port,
         "health_url": f"http://127.0.0.1:{port}/health",

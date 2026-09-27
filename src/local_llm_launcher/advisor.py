@@ -14,6 +14,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from . import catalog
+from .engines.placement import validate
 
 GB = 1024**3
 MB = 1024**2
@@ -352,7 +353,7 @@ def _advise_llamacpp(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, A
     weights_gb = model["size_bytes"] / GB
 
     kv_gb_f16 = estimate_kv_gb(model.get("config") or {}, model.get("param_count_b"), ctx, seqs=1)
-    mult = {"f16": 1.0, "q8_0": 0.5, "q4_0": 0.25}
+    mult = {"f16": 1.0, "bf16": 1.0, "f32": 2.0, "q8_0": 0.5, "q4_0": 0.25}
     k_mult = mult.get(str(cfg.get("cache_type_k", "f16")), 1.0)
     v_mult = mult.get(str(cfg.get("cache_type_v", "f16")), 1.0)
     kv_gb = kv_gb_f16 * (k_mult + v_mult) / 2
@@ -454,6 +455,7 @@ def _advise_llamacpp(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, A
 
 def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[str, Any]) -> Dict[str, Any]:
     """Rate a launch configuration. Returns overall fit, memory budget, per-flag ratings."""
+    validate(engine, config, hw.get("numa"))
     cfg = _merged_config(engine, config)
     rep = _Report()
 
@@ -463,6 +465,24 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
         budget = _advise_llamacpp(model, cfg, hw, rep)
     else:
         raise ValueError(f"Unknown engine '{engine}'")
+
+    custom = bool(config.get("extra_args")) or (engine == "llamacpp" and (
+        any(config.get(k) is not None for k in ("device", "tensor_split", "main_gpu"))
+        or config.get("split_mode") in ("none", "row", "tensor")
+        or config.get("cpu_moe") or (config.get("n_cpu_moe") or 0) > 0))
+    if engine == "llamacpp":
+        if config.get("cpu_moe") or config.get("n_cpu_moe", 0):
+            rep.flag("n_cpu_moe", YELLOW, "CPU expert offload saves GPU memory but uses RAM and may reduce speed. Exact expert sizes are unknown; lower N leaves more experts on the GPU.")
+        if config.get("split_mode") == "tensor":
+            rep.flag("split_mode", YELLOW, "Experimental tensor splitting disables automatic fitting and does not support several MoE/hybrid architectures. Check your model against the installed engine; per-card fit is unknown.")
+    if config.get("extra_args"):
+        rep.flag("extra_args", YELLOW, "Raw flags are appended last and may override these controls. Memory fit cannot be verified.")
+    if config.get("numa") or config.get("numactl_interleave"):
+        count = (hw.get("numa") or {}).get("node_count")
+        message = ("Only one NUMA node is visible to this process; distribution has no cross-node benefit."
+                   if count == 1 else "NUMA topology is unknown; verify allowed nodes before benchmarking."
+                   if count is None else f"{count} allowed NUMA nodes. Benchmark this policy; effects depend on CPU and memory placement.")
+        rep.flag("numactl_interleave" if config.get("numactl_interleave") else "numa", YELLOW, message)
 
     if rep.blockers:
         overall = {"level": RED, "headline": rep.blockers[0], "details": rep.blockers[1:]}
@@ -501,13 +521,19 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
                 "memory to fit.")
         overall = {"level": level, "headline": head, "details": details}
 
+    if custom and not rep.blockers:
+        overall = {"level": YELLOW, "headline": "Memory fit is unknown with custom placement or raw flags. Check engine logs and each card's memory during loading.", "details": overall.get("details", [])}
+        budget["fit_unknown"] = True
+        budget["basis"] += "; baseline only, not a per-device prediction"
+        pct = None
+
     budget["pct"] = round(pct, 2) if pct is not None else None
     return {"overall": overall, "budget": budget, "flags": rep.flags, "engine": engine,
             "effective_config": cfg}
 
 
 def _max_context_that_fits(engine: str, model: Dict[str, Any], hw: Dict[str, Any],
-                           base: Dict[str, Any], kv_dtype_bytes: float) -> int:
+                           base: Dict[str, Any]) -> int:
     """Largest context length keeping the fit under ~90% of budget, rounded to 1024."""
     best = 2048
     for length in range(2048, 262145, 2048):
@@ -539,7 +565,7 @@ def presets(engine: str, model: Dict[str, Any], hw: Dict[str, Any]) -> List[Dict
 
         ctx_base = {"tensor_parallel_size": tp, "gpu_memory_utilization": 0.88,
                     "max_num_seqs": 1, "kv_cache_dtype": "fp8"}
-        max_ctx = _max_context_that_fits("vllm", model, hw, ctx_base, 1.0)
+        max_ctx = _max_context_that_fits("vllm", model, hw, ctx_base)
         out.append({"name": "Max context", "config": {**ctx_base, "max_model_len": max_ctx},
                     "description": f"Longest document window that fits: ~{max_ctx:,} tokens, "
                                    "with compressed conversation memory."})
@@ -565,7 +591,7 @@ def presets(engine: str, model: Dict[str, Any], hw: Dict[str, Any]) -> List[Dict
                            "model onto the GPU as possible."})
         ctx_base = {"flash_attn": "on",
                     "cache_type_k": "q8_0", "cache_type_v": "q8_0", "jinja": True}
-        max_ctx = _max_context_that_fits("llamacpp", model, hw, ctx_base, 1.0)
+        max_ctx = _max_context_that_fits("llamacpp", model, hw, ctx_base)
         out.append({"name": "Max context", "config": {**ctx_base, "ctx_size": max_ctx},
                     "description": f"Longest document window that fits: ~{max_ctx:,} tokens, "
                                    "with compressed conversation memory."})

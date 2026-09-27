@@ -39,7 +39,7 @@ function FlagControl({ spec, value, onChange }) {
   if (spec.type === 'bool') {
     return (
       <label className="row small" style={{ cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!v}
+        <input type="checkbox" aria-label={spec.label} checked={!!v}
           onChange={(e) => onChange(e.target.checked)} />
         {v ? 'On' : 'Off'}
       </label>
@@ -47,7 +47,7 @@ function FlagControl({ spec, value, onChange }) {
   }
   if (spec.type === 'choice') {
     return (
-      <select value={v ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}>
+      <select aria-label={spec.label} value={v ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}>
         {spec.choices.map((c) => (
           <option key={String(c)} value={c ?? ''}>{c === null ? '(automatic)' : String(c)}</option>
         ))}
@@ -67,14 +67,14 @@ function FlagControl({ spec, value, onChange }) {
   }
   if (spec.type === 'int') {
     return (
-      <input type="number" min={spec.min} max={spec.max} step={spec.step || 1}
+      <input aria-label={spec.label} type="number" min={spec.min} max={spec.max} step={spec.step || 1}
         value={v === '' ? '' : v}
         placeholder="(automatic)"
         onChange={(e) => onChange(e.target.value === '' ? null : parseInt(e.target.value, 10))} />
     )
   }
   return (
-    <input type={spec.secret ? 'password' : 'text'} value={v ?? ''}
+    <input aria-label={spec.label} type={spec.secret ? 'password' : 'text'} value={v ?? ''}
       placeholder="(not set)"
       onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} />
   )
@@ -109,8 +109,10 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   const [presets, setPresets] = useState([])
   const [activePreset, setActivePreset] = useState(null)
   const [advice, setAdvice] = useState(null)
+  const [adviceError, setAdviceError] = useState(null)
   const [launching, setLaunching] = useState(false)
   const debounce = useRef(null)
+  const initializedModel = useRef(null)
 
   const model = useMemo(() => models.find((m) => m.repo_id === repoId), [models, repoId])
 
@@ -123,42 +125,57 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   }, [])
 
   useEffect(() => {
-    if (!model) return
+    if (!model || !hardware || initializedModel.current === model.repo_id) return
+    initializedModel.current = model.repo_id
     const mode = defaultEngineMode(model, hardware)
     setEngineMode(mode)
   }, [model, hardware])
 
   useEffect(() => {
     if (!model || !engineMode) return
+    let active = true
     const eng = adviceEngine(engineMode)
-    api.catalog(eng).then(setCatalog).catch(() => setCatalog(null))
+    setCatalog(null)
+    setPresets([])
+    setConfig({})
+    api.catalog(eng).then((result) => { if (active) setCatalog(result) }).catch(() => { if (active) setCatalog(null) })
     api.presets(eng, model.repo_id).then((r) => {
+      if (!active) return
       const ps = r?.presets ?? []
       setPresets(ps)
       if (ps.length > 0) {
         setConfig({ ...ps[0].config })
         setActivePreset(ps[0].name)
       }
-    }).catch(() => setPresets([]))
+    }).catch(() => { if (active) setPresets([]) })
+    return () => { active = false }
   }, [model, engineMode])
 
   useEffect(() => {
     if (!model || !engineMode) return
+    let active = true
+    let sequence = 0
+    setAdvice(null)
+    setAdviceError(null)
     const fetchAdvice = () => {
-      api.advise(adviceEngine(engineMode), model.repo_id, config)
-        .then(setAdvice)
-        .catch(() => setAdvice(null))
+      const request = ++sequence
+      api.advise(adviceEngine(engineMode), model.repo_id, config, engineMode)
+        .then((result) => { if (active && request === sequence) { setAdvice(result); setAdviceError(null) } })
+        .catch((error) => { if (active && request === sequence) { setAdvice(null); setAdviceError(error.message) } })
     }
     clearTimeout(debounce.current)
     debounce.current = setTimeout(fetchAdvice, 250)
     const t = setInterval(fetchAdvice, 8000)
-    return () => { clearTimeout(debounce.current); clearInterval(t) }
+    return () => { active = false; clearTimeout(debounce.current); clearInterval(t) }
   }, [model, engineMode, config])
 
   const setFlag = useCallback((key, value) => {
     setActivePreset(null)
     setConfig((c) => {
       const next = { ...c }
+      if (key === "cpu_moe" && value) delete next.n_cpu_moe
+      if (key === "n_cpu_moe" && value > 0) delete next.cpu_moe
+      if (key === "split_mode" && value === "none") delete next.tensor_split
       if (value === null || value === undefined) delete next[key]
       else next[key] = value
       return next
@@ -189,13 +206,15 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
     )
   }
 
-  const flags = catalog?.flags ?? []
+  const flags = (catalog?.flags ?? []).filter((f) =>
+    !(engineMode === "vllm-docker" && f.key === "numactl_interleave") &&
+    !(config.split_mode === "none" && f.key === "tensor_split"))
   const grouped = ['essential', 'performance', 'api'].map((cat) => ({
     cat, items: flags.filter((f) => f.category === cat && !f.advanced),
   }))
   const advanced = flags.filter((f) => f.advanced)
   const engineMissing = engineMode && !engineAvailable(engineMode, hardware)
-  const level = engineMissing ? 'red' : advice?.overall?.level
+  const level = engineMissing || adviceError ? 'red' : advice?.overall?.level
   const ggufChoices = model?.gguf_files ?? []
 
   const budget = advice?.budget
@@ -267,6 +286,27 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
         </div>
       </div>
 
+      <div className="section" style={{ padding: '14px 20px' }}>
+        <div className="small">NUMA (memory locality across CPU sockets): {hardware?.numa?.node_count ?? 'unknown'} allowed node(s).
+          {' '}numactl {hardware?.numa?.numactl_path ? 'available' : 'not available'}.
+          {hardware?.numa?.node_count === 1 && ' One visible node has no cross-node distribution benefit.'}
+          {' '}Policies are optional; multi-socket machines can benefit, but measure your workload.</div>
+        {engineMode === 'llamacpp' && <div className="small" style={{ marginTop: 8 }}>
+          llama.cpp devices: {(hardware?.llama_devices ?? []).length
+            ? hardware.llama_devices.map((d) => d.name).join(', ')
+            : 'not detected; leave device selection unset or enter names from llama-server --list-devices.'}
+          {(hardware?.llama_devices ?? []).length > 0 && <div className="row" style={{ flexWrap: 'wrap' }}>
+            {hardware.llama_devices.map((d) => <label key={d.name} title={d.description} className="row">
+              <input type="checkbox" checked={(config.device || '').split(',').includes(d.name)}
+                onChange={(event) => {
+                  const selected = (config.device || '').split(',').filter(Boolean)
+                  setFlag('device', (event.target.checked ? [...selected, d.name] : selected.filter((name) => name !== d.name)).join(',') || null)
+                }} />{d.name}
+            </label>)}
+          </div>}
+        </div>}
+      </div>
+      {adviceError && <div className="section" role="alert" style={{ padding: '14px 20px', color: 'var(--nogo)' }}>{adviceError}</div>}
       {/* FIT VERDICT + VRAM */}
       {engineMissing && (
         <div className="section">
@@ -285,7 +325,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
         <div className="section">
           <div style={{ padding: '14px 20px' }} className="stack">
             <FitVerdict overall={advice.overall} />
-            {budget?.available_gb != null && (
+            {budget?.available_gb != null && !budget.fit_unknown && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <RingGauge percent={budgetPct} color={budgetPct > 90 ? 'var(--nogo)' : budgetPct > 70 ? 'var(--caution)' : 'var(--go)'} />
                 <div>
@@ -334,11 +374,11 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
               ? 'Fix the red items above before launching.'
               : level === 'yellow'
                 ? 'You can launch, but read the yellow notes first.'
-                : 'All clear for your hardware.'}
+                : advice ? 'All clear for your hardware.' : 'Checking configuration…'}
           </div>
           <button
             className={`launchbtn ${level === 'yellow' ? 'caution' : level === 'red' ? 'nogo' : ''}`}
-            disabled={launching || level === 'red'}
+            disabled={launching || level === 'red' || !advice}
             onClick={launch}>
             {launching ? 'Launching…' : level === 'yellow' ? 'Launch anyway' : 'Launch'}
           </button>

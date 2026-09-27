@@ -77,3 +77,13 @@ def test_detect_hardware_runs_without_crashing():
     assert isinstance(hw, hardware.Hardware)
     assert hw.cpu_cores >= 1
     assert hw.ram_gb > 0
+
+
+def test_find_llamacpp_prefers_source_build_over_path(tmp_path, monkeypatch):
+    source = tmp_path / "source" / "llama-server"
+    source.parent.mkdir()
+    source.write_text("binary")
+    source.chmod(0o755)
+    monkeypatch.setattr(hardware, "_LLAMA_LOCATIONS", [str(source)])
+    monkeypatch.setattr(hardware.shutil, "which", lambda name: "/usr/bin/llama-server")
+    assert hardware.find_llamacpp() == str(source)
