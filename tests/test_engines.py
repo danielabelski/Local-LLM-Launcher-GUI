@@ -111,6 +111,13 @@ def test_vllm_docker_command():
     assert spec["container_name"].startswith("llml-")
 
 
+def test_vllm_docker_maps_uvm_when_present(monkeypatch):
+    monkeypatch.setattr(vllm_docker.os.path, "exists", lambda path: path == "/dev/nvidia-uvm")
+    assert "--device=/dev/nvidia-uvm" in vllm_docker.build(MODEL, {})["argv"]
+    monkeypatch.setattr(vllm_docker.os.path, "exists", lambda path: False)
+    assert "--device=/dev/nvidia-uvm" not in vllm_docker.build(MODEL, {})["argv"]
+
+
 def test_vllm_docker_loopback_binding_by_default():
     spec = vllm_docker.build(MODEL, {"port": 8002})
     i = spec["argv"].index("-p")
