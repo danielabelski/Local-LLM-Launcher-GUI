@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,11 +21,12 @@ def port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def find_free_port(preferred: int, max_tries: int = 100) -> int:
+def find_free_port(preferred: int, max_tries: int = 100,
+                   reserved: Optional[set[int]] = None) -> int:
     """Return `preferred` if free, otherwise the next free port above it."""
     port = preferred
     for _ in range(max_tries):
-        if not port_in_use(port):
+        if port not in (reserved or ()) and not port_in_use(port):
             return port
         port += 1
     raise RuntimeError(
@@ -38,6 +40,7 @@ class ServerManager:
         self.log_dir = self.app_dir / "logs"
         self.state_file = self.app_dir / "servers.json"
         self.app_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self.servers: Dict[str, LocalServer] = {}
         self._reload()
 
@@ -59,10 +62,11 @@ class ServerManager:
             self.servers[srv.server_id] = srv
 
     def _save(self) -> None:
-        records = [s.to_record() for s in self.servers.values()]
-        tmp = self.state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(records, indent=2))
-        tmp.replace(self.state_file)
+        with self._lock:
+            records = [s.to_record() for s in self.servers.values()]
+            tmp = self.state_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(records, indent=2))
+            tmp.replace(self.state_file)
 
     # ------------------------------------------------------------------- launch
 
@@ -78,60 +82,70 @@ class ServerManager:
 
     def launch(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
                llamacpp_binary: Optional[str] = None) -> LocalServer:
-        # Resolve the port into the config BEFORE building the command, so the
-        # auto-incremented port lands in the argv, not just in the record.
-        config = dict(config)
-        default_port = catalog.defaults("llamacpp")["port"] if engine_mode == "llamacpp" \
-            else catalog.defaults("vllm")["port"]
-        config["port"] = find_free_port(int(config.get("port", default_port)))
-        spec = self.build_spec(engine_mode, model, config, llamacpp_binary)
-        srv = LocalServer(
-            server_id=uuid.uuid4().hex[:12],
-            engine=engine_mode,
-            model_label=model["repo_id"],
-            port=spec["port"],
-            argv=spec["argv"],
-            env=spec.get("env") or {},
-            log_dir=self.log_dir,
-            container_name=spec.get("container_name"),
-            env_file=spec.get("env_file"),
-        )
-        if not srv.start():
-            srv._cleanup_env_file()
-            raise RuntimeError("The server process failed to start. Check the logs for details.")
-        self.servers[srv.server_id] = srv
-        self._save()
+        with self._lock:
+            # Reserve the port before building/spawning: a new process may not
+            # listen yet when another launch arrives.
+            config = dict(config)
+            default_port = catalog.defaults("llamacpp")["port"] if engine_mode == "llamacpp" \
+                else catalog.defaults("vllm")["port"]
+            reserved = {s.port for s in self.servers.values() if s.is_running()}
+            config["port"] = find_free_port(int(config.get("port", default_port)),
+                                            reserved=reserved)
+            spec = self.build_spec(engine_mode, model, config, llamacpp_binary)
+            srv = LocalServer(
+                server_id=uuid.uuid4().hex[:12],
+                engine=engine_mode,
+                model_label=model["repo_id"],
+                port=spec["port"],
+                argv=spec["argv"],
+                env=spec.get("env") or {},
+                log_dir=self.log_dir,
+                container_name=spec.get("container_name"),
+                env_file=spec.get("env_file"),
+            )
+            if not srv.start():
+                srv._cleanup_env_file()
+                self.servers[srv.server_id] = srv
+                self._save()
+                raise RuntimeError("The server process failed to start. Check the logs for details.")
+            self.servers[srv.server_id] = srv
+            self._save()
         return srv
 
     # ------------------------------------------------------------------ queries
 
     def list(self) -> List[Dict[str, Any]]:
-        return [s.status() for s in self.servers.values()]
+        with self._lock:
+            return [s.status() for s in self.servers.values()]
 
     def get(self, server_id: str) -> Optional[LocalServer]:
-        return self.servers.get(server_id)
+        with self._lock:
+            return self.servers.get(server_id)
 
     def stop(self, server_id: str) -> bool:
-        srv = self.servers.get(server_id)
-        if not srv:
-            return False
-        ok = srv.stop()
-        self._save()
-        return ok
+        with self._lock:
+            srv = self.servers.get(server_id)
+            if not srv:
+                return False
+            ok = srv.stop()
+            self._save()
+            return ok
 
     def remove(self, server_id: str) -> bool:
-        srv = self.servers.pop(server_id, None)
-        if not srv:
-            return False
-        if srv.is_running():
-            srv.stop()
-        else:
-            srv._cleanup_env_file()  # server already dead — still delete its env file
-        self._save()
-        return True
-
-    def stop_all(self) -> None:
-        for srv in self.servers.values():
+        with self._lock:
+            srv = self.servers.pop(server_id, None)
+            if not srv:
+                return False
             if srv.is_running():
                 srv.stop()
-        self._save()
+            else:
+                srv._cleanup_env_file()  # server already dead — still delete its env file
+            self._save()
+            return True
+
+    def stop_all(self) -> None:
+        with self._lock:
+            for srv in self.servers.values():
+                if srv.is_running():
+                    srv.stop()
+            self._save()

@@ -507,7 +507,7 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
 
 
 def _max_context_that_fits(engine: str, model: Dict[str, Any], hw: Dict[str, Any],
-                           base: Dict[str, Any], kv_dtype_bytes: float) -> int:
+                           base: Dict[str, Any]) -> int:
     """Largest context length keeping the fit under ~90% of budget, rounded to 1024."""
     best = 2048
     for length in range(2048, 262145, 2048):
@@ -539,7 +539,7 @@ def presets(engine: str, model: Dict[str, Any], hw: Dict[str, Any]) -> List[Dict
 
         ctx_base = {"tensor_parallel_size": tp, "gpu_memory_utilization": 0.88,
                     "max_num_seqs": 1, "kv_cache_dtype": "fp8"}
-        max_ctx = _max_context_that_fits("vllm", model, hw, ctx_base, 1.0)
+        max_ctx = _max_context_that_fits("vllm", model, hw, ctx_base)
         out.append({"name": "Max context", "config": {**ctx_base, "max_model_len": max_ctx},
                     "description": f"Longest document window that fits: ~{max_ctx:,} tokens, "
                                    "with compressed conversation memory."})
@@ -565,7 +565,7 @@ def presets(engine: str, model: Dict[str, Any], hw: Dict[str, Any]) -> List[Dict
                            "model onto the GPU as possible."})
         ctx_base = {"flash_attn": "on",
                     "cache_type_k": "q8_0", "cache_type_v": "q8_0", "jinja": True}
-        max_ctx = _max_context_that_fits("llamacpp", model, hw, ctx_base, 1.0)
+        max_ctx = _max_context_that_fits("llamacpp", model, hw, ctx_base)
         out.append({"name": "Max context", "config": {**ctx_base, "ctx_size": max_ctx},
                     "description": f"Longest document window that fits: ~{max_ctx:,} tokens, "
                                    "with compressed conversation memory."})

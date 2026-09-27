@@ -263,11 +263,6 @@ class OpenWebUIManager:
             return status
         if port_in_use(port):
             port = find_free_port(port)
-        if port_in_use(port):
-            raise RuntimeError(
-                f"Port {port} is already in use by another program. "
-                f"Close it or pick a different port."
-            )
 
         env: Dict[str, str] = {}
         urls = [u for u in (connect_urls or []) if u]

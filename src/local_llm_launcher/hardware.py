@@ -202,10 +202,13 @@ _LLAMA_LOCATIONS = [
 def find_llamacpp(extra_path: Optional[str] = None) -> Optional[str]:
     if extra_path and os.path.isfile(extra_path) and os.access(extra_path, os.X_OK):
         return extra_path
+    for candidate in _LLAMA_LOCATIONS[:3]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     found = shutil.which("llama-server")
     if found:
         return found
-    for candidate in _LLAMA_LOCATIONS:
+    for candidate in _LLAMA_LOCATIONS[3:]:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None

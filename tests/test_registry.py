@@ -1,5 +1,7 @@
 """Tests for the server manager and its persistence."""
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -91,6 +93,23 @@ def test_launch_resolves_port_before_build_spec(tmp_path, monkeypatch):
         blocker.close()
 
 
+def test_launch_reserves_port_before_server_listens(tmp_path, monkeypatch):
+    mgr = ServerManager(app_dir=tmp_path)
+    monkeypatch.setattr(mgr, "build_spec", lambda _mode, _model, config, _binary: {
+        "argv": [sys.executable, "-c", "import time; time.sleep(60)"],
+        "env": {}, "port": config["port"],
+    })
+    first = mgr.launch("llamacpp", GGUF, {"port": 45126})
+    try:
+        second = mgr.launch("llamacpp", GGUF, {"port": 45126})
+        try:
+            assert second.port == first.port + 1
+        finally:
+            mgr.stop(second.server_id)
+    finally:
+        mgr.stop(first.server_id)
+
+
 def test_remove_dead_server(tmp_path, monkeypatch):
     mgr = ServerManager(app_dir=tmp_path)
     monkeypatch.setattr(mgr, "build_spec", lambda *a, **k: {
@@ -101,3 +120,52 @@ def test_remove_dead_server(tmp_path, monkeypatch):
     assert not srv.is_running()
     assert mgr.remove(srv.server_id)
     assert mgr.list() == []
+
+
+def test_failed_launch_keeps_record_and_log(tmp_path, monkeypatch):
+    mgr = ServerManager(app_dir=tmp_path)
+    monkeypatch.setattr(mgr, "build_spec", lambda *a, **k: {
+        "argv": [str(tmp_path / "missing-llama-server")], "env": {}, "port": 45125,
+    })
+    with pytest.raises(RuntimeError, match="Check the logs"):
+        mgr.launch("llamacpp", GGUF, {})
+
+    [status] = mgr.list()
+    assert status["running"] is False
+    restored = ServerManager(app_dir=tmp_path).get(status["id"])
+    assert restored is not None
+    assert any("failed to start" in line for line in restored.tail_logs())
+
+
+def test_concurrent_saves_do_not_share_temporary_file(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    mgr = ServerManager(app_dir=tmp_path)
+    first_writing = Event()
+    release_first = Event()
+    second_writing = Event()
+    original = Path.write_text
+    calls = 0
+
+    def paused_write(path, *args, **kwargs):
+        nonlocal calls
+        if path == mgr.state_file.with_suffix(".tmp"):
+            calls += 1
+            if calls == 1:
+                first_writing.set()
+                assert release_first.wait(timeout=5)
+            else:
+                second_writing.set()
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", paused_write)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(mgr._save)
+        try:
+            assert first_writing.wait(timeout=5)
+            second = pool.submit(mgr._save)
+            assert not second_writing.wait(timeout=0.2)
+        finally:
+            release_first.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
