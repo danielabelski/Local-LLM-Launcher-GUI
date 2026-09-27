@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import uuid
 from pathlib import Path
@@ -11,7 +12,7 @@ from .engines import llamacpp, vllm_docker, vllm_native
 from .engines.base import LocalServer
 from . import catalog
 
-APP_DIR = Path.home() / ".local-llm-launcher"
+APP_DIR = Path(os.environ.get("LOCAL_LLM_LAUNCHER_HOME") or Path.home() / ".local-llm-launcher").expanduser()
 
 
 def port_in_use(port: int) -> bool:
