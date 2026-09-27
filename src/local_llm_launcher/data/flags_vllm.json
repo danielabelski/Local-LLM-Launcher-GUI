@@ -116,6 +116,7 @@
     {
       "key": "enable_prefix_caching",
       "flag": "--enable-prefix-caching",
+      "negative_flag": "--no-enable-prefix-caching",
       "label": "Reuse repeated prompts",
       "type": "bool",
       "default": true,
@@ -125,6 +126,7 @@
     {
       "key": "enable_chunked_prefill",
       "flag": "--enable-chunked-prefill",
+      "negative_flag": "--no-enable-chunked-prefill",
       "label": "Smooth long-prompt processing",
       "type": "bool",
       "default": true,

@@ -57,6 +57,16 @@ def test_only_explicit_config_is_emitted():
     assert "--split-mode" not in argv
 
 
+def test_explicit_false_disables_default_on_vllm_flags():
+    for build in (vllm_native.build, vllm_docker.build):
+        argv = build(MODEL, {"enable_prefix_caching": False,
+                             "enable_chunked_prefill": False})["argv"]
+        assert "--no-enable-prefix-caching" in argv
+        assert "--no-enable-chunked-prefill" in argv
+        assert "--enable-prefix-caching" not in argv
+    assert "--trust-remote-code" not in vllm_native.build(MODEL, {"trust_remote_code": False})["argv"]
+
+
 def test_vllm_native_env_handling():
     spec = vllm_native.build(MODEL, {"device_ids": "0,1", "hf_token": "hf_secret"})
     assert spec["env"]["CUDA_VISIBLE_DEVICES"] == "0,1"
