@@ -137,7 +137,18 @@ _GGUF_SCALARS = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 1
 _GGUF_FORMATS = {0: '<B', 1: '<b', 2: '<H', 3: '<h', 4: '<I', 5: '<i', 6: '<f', 7: '<?', 10: '<Q', 11: '<q', 12: '<d'}
 
 
+# Real headers nest arrays at most once or twice; anything deeper is corrupt.
+_GGUF_MAX_DEPTH = 8
+
+
+def _gguf_remaining(stream):
+    return os.fstat(stream.fileno()).st_size - stream.tell()
+
+
 def _gguf_read(stream, size):
+    # A declared size beyond the file end is corrupt; never try to allocate it.
+    if size > _gguf_remaining(stream):
+        raise ValueError('truncated GGUF header')
     data = stream.read(size)
     if len(data) != size:
         raise ValueError('truncated GGUF header')
@@ -148,16 +159,21 @@ def _gguf_string(stream):
     return _gguf_read(stream, struct.unpack('<Q', _gguf_read(stream, 8))[0]).decode('utf-8', 'replace')
 
 
-def _gguf_value(stream, kind, keep):
+def _gguf_value(stream, kind, keep, depth=0):
     if kind == 8:
         return _gguf_string(stream)
     if kind == 9:
+        if depth >= _GGUF_MAX_DEPTH:
+            raise ValueError('GGUF arrays nested too deeply')
         inner, count = struct.unpack('<IQ', _gguf_read(stream, 12))
+        # Every element takes at least one byte (a string at least its 8-byte length).
+        if count * _GGUF_SCALARS.get(inner, 8) > _gguf_remaining(stream):
+            raise ValueError('truncated GGUF header')
         if inner in _GGUF_SCALARS:
             stream.seek(_GGUF_SCALARS[inner] * count, os.SEEK_CUR)
         else:
             for _ in range(count):
-                _gguf_value(stream, inner, False)
+                _gguf_value(stream, inner, False, depth + 1)
         return None
     if kind not in _GGUF_FORMATS:
         raise ValueError('unknown GGUF value type')
@@ -180,6 +196,8 @@ def _gguf_header(path, _stamp):
             value = _gguf_value(stream, kind, True)
             if value is not None:
                 metadata[key] = value
+        if tensors * 24 > _gguf_remaining(stream):  # name length, dims count, type, offset
+            raise ValueError('truncated GGUF header')
         names = set()
         for _ in range(tensors):
             names.add(_gguf_string(stream))
@@ -214,20 +232,34 @@ def _gguf_mtp_layers(path):
     return arch, has
 
 
-def _is_head(name):
-    return name.lower().startswith('mtp-') and name.lower().endswith('.gguf')
+def is_head(name):
+    """llama.cpp's rule for a separate MTP head file: a GGUF whose name contains 'mtp-'."""
+    return 'mtp-' in name.lower() and name.lower().endswith('.gguf')
 
 
-def _sidecar(model, model_path):
-    """A separate MTP head (llama.cpp names them mtp-*.gguf): same folder first, then same quant."""
+def _head_arch(path):
+    try:
+        return _gguf(path)[0].get('general.architecture')
+    except (OSError, ValueError, struct.error, UnicodeError, MemoryError, RecursionError, OverflowError):
+        return None
+
+
+def _sidecar(model, model_path, arch):
+    """A separate MTP head for this model: same folder first, then same quant.
+
+    A head must be built for the model's architecture: llama.cpp's converter keeps it
+    ('qwen35'), and Gemma 4 names its head '<arch>-assistant'. Any other mtp- file in a
+    shared folder belongs to a different model.
+    """
     from ..discovery import guess_gguf_quant
     folder = Path(model_path).parent
-    heads = [f['path'] for f in model.get('gguf_files') or () if _is_head(f.get('filename', ''))]
+    heads = [f['path'] for f in model.get('gguf_files') or () if is_head(f.get('filename', ''))]
     try:
-        heads += [str(p) for p in folder.iterdir() if _is_head(p.name)]
+        heads += [str(p) for p in folder.iterdir() if is_head(p.name)]
     except OSError:
         pass
-    heads = sorted(set(heads) - {model_path})
+    heads = sorted(h for h in set(heads) - {model_path}
+                   if arch and (_head_arch(h) == arch or str(_head_arch(h) or '').startswith(arch + '-')))
     if not heads:
         return None
     quant = (guess_gguf_quant(Path(model_path).name) or '').lower()
@@ -245,13 +277,13 @@ def llamacpp(model, config, capabilities, path=None):
         path = _pick_gguf_path(model, config)
     try:
         arch, embedded = _gguf_mtp_layers(path)
-    except (OSError, ValueError, struct.error, UnicodeError):
+    except (OSError, ValueError, struct.error, UnicodeError, MemoryError, RecursionError, OverflowError):
         return _result('red', 'Could not read the selected GGUF file to check for MTP layers. Turn MTP off.')
-    head = None if embedded and arch not in _LLAMA_SIDECAR_ONLY else _sidecar(model, path)
+    head = None if embedded and arch not in _LLAMA_SIDECAR_ONLY else _sidecar(model, path, arch)
     if not embedded and head is None:
-        extra = (' Gemma 4 keeps its MTP head in a separate file; download it next to the model with a name starting "mtp-".'
+        extra = (' Gemma 4 keeps its MTP head in a separate file; download it next to the model (its name contains "mtp-").'
                  if arch in _LLAMA_SIDECAR_ONLY else '')
-        return _result('red', f'This GGUF file has no MTP layers and there is no separate mtp-*.gguf head next to it, so there is nothing for MTP to use.{extra} Turn MTP off.')
+        return _result('red', f'This GGUF file has no MTP layers and there is no separate MTP head file for this model next to it, so there is nothing for MTP to use.{extra} Turn MTP off.')
     # Only a file that has MTP layers should ever be told to update the engine.
     if capabilities.get('mtp') is False:
         build = capabilities.get('build')
@@ -271,15 +303,20 @@ def llamacpp(model, config, capabilities, path=None):
         notes.append(f'Could not check the installed llama-server; MTP for {arch} needs build {since} or newer.')
     else:
         notes.append(f'Could not read the llama.cpp build number; MTP for {arch} needs build {since} or newer.')
-    args = ['--spec-type', 'draft-mtp', '--spec-draft-n-max', _LLAMA_DRAFT_MAX]
+    try:
+        raw = {token.split('=', 1)[0] for token in shlex.split(str(config.get('extra_args') or ''))}
+    except ValueError:
+        raw = set()
+    # llama.cpp adds up repeated --spec-type values instead of keeping the last one,
+    # so a user's own --spec-type list replaces the launcher's rather than joining it.
+    args = [] if '--spec-type' in raw else ['--spec-type', 'draft-mtp']
+    if '--spec-type' in raw:
+        notes.append('Your extra raw flags set --spec-type, so the launcher leaves out its own; include draft-mtp there to keep MTP.')
+    args += ['--spec-draft-n-max', _LLAMA_DRAFT_MAX]
     if head:
         args += ['--spec-draft-model', head]
-    try:
-        raw = shlex.split(str(config.get('extra_args') or ''))
-    except ValueError:
-        raw = []
-    if any(token.split('=', 1)[0] in ('--spec-type', '--spec-draft-model', '-md', '--model-draft') for token in raw):
-        notes.append('Your extra raw flags also set speculative decoding options; those take priority.')
+    if raw & {'--spec-draft-model', '-md', '--model-draft', '--spec-draft-n-max'}:
+        notes.append('Your extra raw flags also set draft options; those take priority.')
     source = f'the separate head file {Path(head).name}' if head else "the model's built-in MTP layers"
     message = ' '.join([f'Uses {source} (--spec-type draft-mtp, up to {_LLAMA_DRAFT_MAX} guessed tokens per step).', *notes])
     return _result('yellow' if notes else 'green', message, args)

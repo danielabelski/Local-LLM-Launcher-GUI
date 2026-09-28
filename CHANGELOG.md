@@ -3,7 +3,17 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
-## 2026-09-28 — Unreleased
+## 2026-09-28 — v0.4.5
+
+One **Use MTP** checkbox for both engines, and plainer explanations for every
+setting. Merged via PR #21, including the fixes from its pre-merge code review
+(seven reviewers plus an independent validator; all five findings confirmed and
+fixed below). 404 tests passing.
+
+> **Verification note:** MTP flag selection was checked against the real source
+> of vLLM 0.8.5, 0.9.2, 0.10.0, 0.10.2, 0.11.0 and 0.30.0 and llama.cpp build
+> 11235, and the GGUF reader against llama.cpp's own `gguf-py`. No MTP launch
+> on real GPUs has been run for this release, and no speed-up is claimed.
 
 ### Added: Use MTP (multi-token prediction) for vLLM and llama.cpp
 
@@ -24,7 +34,27 @@ when the work was done.
   setting turns red, launch is blocked, and the message says to update the
   engine or turn off MTP to run the model without it. A model without MTP
   layers is told to turn MTP off instead.
-- The GGUF picker no longer defaults to an `mtp-*.gguf` head file as the model.
+- The GGUF picker no longer defaults to a separate MTP head file as the model.
+
+### Fixed before release (PR #21 review)
+
+- **A different model's MTP head is no longer used.** In a shared GGUF folder,
+  any `mtp-*.gguf` file was accepted, so a model without MTP layers could get a
+  green verdict and be launched with another model's head. A head must now be
+  built for the model's architecture (or be its `<arch>-assistant` head, as
+  Gemma 4 ships).
+- **Head files named like `model-mtp-Q8_0.gguf` are recognized**, matching
+  llama.cpp's own rule (the name contains `mtp-`), both for MTP and for keeping
+  head files out of the default model choice.
+- **Your own `--spec-type` in extra raw flags now replaces the launcher's.**
+  llama.cpp adds up repeated `--spec-type` values, so the old "your flags take
+  priority" note was wrong; the launcher now leaves its own `draft-mtp` out and
+  says to include it in your list.
+- **A corrupt or hostile GGUF header shows the red "could not read" message**
+  instead of failing the request. Declared sizes beyond the end of the file and
+  arrays nested too deeply are rejected before anything is allocated.
+- Tests now cover the warning (yellow) paths for partial engine evidence and
+  the unreadable-file path.
 
 ### Changed: plainer setting explanations
 

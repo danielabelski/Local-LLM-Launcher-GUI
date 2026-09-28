@@ -307,3 +307,82 @@ def test_head_choice_prefers_same_folder_then_same_quant(tmp_path):
 def test_old_llama_with_plain_model_is_told_to_turn_mtp_off(tmp_path):
     result = mtp.llamacpp(gguf_model(write_gguf(tmp_path / 'plain.gguf', 'llama', nextn=None)), ON, {"mtp": False, "build": 8000})
     assert 'no MTP layers' in result['message'] and 'Update' not in result['message']
+
+
+# ------------------------------------------------ review fixes (PR #21 review)
+
+def test_unrelated_head_in_a_shared_folder_is_ignored(tmp_path):
+    # A flat folder: a Qwen3.5 file without MTP layers next to another model's head.
+    main = write_gguf(tmp_path / 'Qwen3.5-9B-Q4_K_M.gguf', 'qwen35', nextn=None)
+    write_gguf(tmp_path / 'mtp-gemma-4-31B-Q4_K_M.gguf', 'gemma4-assistant', nextn=None)
+    result = mtp.llamacpp(gguf_model(main), ON, NEW)
+    assert result['level'] == 'red' and result['args'] == []
+    # A head converted from the same architecture is still used.
+    own = write_gguf(tmp_path / 'mtp-Qwen3.5-9B-Q4_K_M.gguf', 'qwen35', nextn=1)
+    assert mtp.llamacpp(gguf_model(main), ON, NEW)['args'][-2:] == ['--spec-draft-model', own]
+
+
+def test_head_named_with_mtp_in_the_middle_is_found_and_not_picked_as_model(tmp_path):
+    (tmp_path / 'Q4_K_M').mkdir()
+    main = write_gguf(tmp_path / 'Q4_K_M/step-3.7-Q4_K_M.gguf', 'step35', nextn=None)
+    head = write_gguf(tmp_path / 'step-3.7-mtp-Q8_0.gguf', 'step35', nextn=1)
+    model = gguf_model(head, main)
+    assert llamacpp._pick_gguf_path(model, {}) == main
+    assert mtp.llamacpp(model, ON, NEW)['args'][-2:] == ['--spec-draft-model', head]
+
+
+def test_raw_spec_type_replaces_the_launchers_own(tmp_path):
+    path = write_gguf(tmp_path / 'm.gguf', 'qwen35')
+    result = mtp.llamacpp(gguf_model(path), {**ON, 'extra_args': '--spec-type draft-mtp,ngram-mod'}, NEW)
+    assert '--spec-type' not in result['args'] and result['level'] == 'yellow'
+    assert 'include draft-mtp there' in result['message']
+    last_wins = mtp.llamacpp(gguf_model(path), {**ON, 'extra_args': '--spec-draft-n-max 5'}, NEW)
+    assert last_wins['args'][:2] == ['--spec-type', 'draft-mtp'] and 'take priority' in last_wins['message']
+
+
+@pytest.mark.parametrize('corrupt', ['huge-string', 'huge-array', 'deep-nesting', 'truncated'])
+def test_malformed_gguf_header_gives_a_red_verdict(tmp_path, corrupt):
+    path = tmp_path / 'bad.gguf'
+    head = b'GGUF' + struct.pack('<IQQ', 3, 0, 1) + struct.pack('<Q', 1) + b'k'
+    if corrupt == 'huge-string':
+        body = struct.pack('<I', 8) + struct.pack('<Q', 1 << 62)
+    elif corrupt == 'huge-array':
+        body = struct.pack('<I', 9) + struct.pack('<IQ', 8, 1 << 60)
+    elif corrupt == 'deep-nesting':
+        body = struct.pack('<I', 9) + struct.pack('<IQ', 9, 1) * 5000
+    else:
+        body = struct.pack('<I', 4)
+    path.write_bytes(head + body)
+    result = mtp.llamacpp(gguf_model(str(path)), ON, NEW)
+    assert result['level'] == 'red' and result['message'].startswith('Could not read the selected GGUF file')
+
+
+@pytest.mark.parametrize('capabilities, note', [
+    ({"mtp": True, "build": None}, 'Could not read the llama.cpp build number; MTP for glm4moe needs build 10603'),
+    ({"mtp": None, "build": None}, 'Could not check the installed llama-server; MTP for glm4moe needs build 10603'),
+])
+def test_llama_partial_evidence_is_a_warning(tmp_path, capabilities, note):
+    result = mtp.llamacpp(gguf_model(write_gguf(tmp_path / 'm.gguf', 'glm4moe')), ON, capabilities)
+    assert result['level'] == 'yellow' and note in result['message']
+    assert result['args'][:2] == ['--spec-type', 'draft-mtp']
+
+
+def test_vllm_unknown_family_list_is_a_warning():
+    evidence = {**V030, "mtp": {"methods": V030["mtp"]["methods"], "models": None}}
+    result = mtp.vllm("vllm-native", DEEPSEEK, ON, evidence)
+    assert result["level"] == "yellow" and spec(result)["method"] == "mtp"
+    assert "Could not confirm this vLLM supports MTP for this model family" in result["message"]
+
+
+def test_yellow_decision_reaches_advice_and_launch(client, monkeypatch):
+    evidence = {**V030, "mtp": {"methods": V030["mtp"]["methods"], "models": None}}
+    monkeypatch.setattr(vllm_capabilities, "probe", lambda *a, **kw: evidence)
+    advice = client.post("/api/advise", json={"engine": "vllm", "engine_mode": "vllm-native",
+                                              "repo_id": "x", "config": ON}).json()
+    assert advice["flags"]["use_mtp"]["level"] == "yellow"
+    assert advice["overall"]["level"] in ("yellow", "red")
+    assert any("Could not confirm" in d for d in advice["overall"]["details"])
+    seen = {}
+    monkeypatch.setattr(api.servers, "build_spec", lambda _mode, _model, config, *a: seen.update(config) or (_ for _ in ()).throw(RuntimeError("stop")))
+    client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "x", "config": ON})
+    assert seen["_mtp_args"][0] == "--speculative-config"
