@@ -16,8 +16,10 @@ def _pick_gguf_path(model: Dict[str, Any], config: Dict[str, Any]) -> str:
         for f in files:
             if f["filename"] == wanted:
                 return f["path"]
-    if files:
-        return files[0]["path"]
+    # A separate MTP head (mtp-*.gguf) is never the model itself.
+    models = [f for f in files if not f["filename"].lower().startswith("mtp-")]
+    if models or files:
+        return (models or files)[0]["path"]
     return model["path"]
 
 
@@ -40,7 +42,7 @@ def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "llama-se
     argv = [binary, "-m", _pick_gguf_path(model, config)]
     if host:
         argv.extend(["--host", host])
-    argv += flags + loading + extra
+    argv += flags + loading + list(config.get("_mtp_args") or ()) + extra
     return {
         "argv": wrap(argv, config),
         "env": env,

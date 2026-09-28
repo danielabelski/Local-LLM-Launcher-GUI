@@ -22,7 +22,7 @@ def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "vllm") -
     host = config.get("host", "127.0.0.1")
     argv = ([binary, "serve", model["repo_id"]]
             + (["--host", host] if host else [])
-            + flags + extra)
+            + flags + list(config.get("_mtp_args") or ()) + extra)
     return {
         "argv": wrap(argv, config),
         "env": env,

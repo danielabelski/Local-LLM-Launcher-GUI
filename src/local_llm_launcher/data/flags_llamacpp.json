@@ -11,7 +11,7 @@
       "min": 1024,
       "max": 65535,
       "category": "essential",
-      "help": "The network port the server listens on. Apps connect to http://localhost:PORT/v1. Change it only if another program already uses this port."
+      "help": "The network port the server answers on. Apps connect to http://localhost:PORT/v1. Change it only if another program already uses this port; if the port is taken when you launch, the launcher picks the next free one."
     },
     {
       "key": "ctx_size",
@@ -23,7 +23,7 @@
       "max": 262144,
       "step": 1024,
       "category": "essential",
-      "help": "How much text (in tokens \u2014 roughly 3/4 of a word each) the model can keep in mind at once. Bigger needs more memory. 8192 is plenty for chat."
+      "help": "The most text the model can work with at once: your prompt, the conversation so far, and its reply, counted in tokens (a token is about \u00be of a word). A bigger window needs more memory for conversation memory (the KV cache). 8192 covers normal chat; raise it for long documents or large code files."
     },
     {
       "key": "n_gpu_layers",
@@ -34,7 +34,7 @@
       "min": 0,
       "max": 999,
       "category": "essential",
-      "help": "How many of the model's layers run on the GPU instead of the CPU. Leave empty for automatic \u2014 recent llama.cpp measures your GPU and fits as many as possible. Set 999 to force everything onto the GPU, or 0 for CPU only."
+      "help": "How many of the model's layers run on the GPU; the rest run on the CPU from system RAM, which is much slower. Leave empty for automatic: recent llama.cpp measures your GPU and fits as many layers as it can. Set 999 to force everything onto the GPU, or 0 to run on the CPU only."
     },
     {
       "key": "threads",
@@ -45,7 +45,7 @@
       "min": 1,
       "max": 128,
       "category": "performance",
-      "help": "How many CPU cores to use for the parts that run on the CPU. Leave empty for automatic. Matters most when some layers aren't on the GPU."
+      "help": "How many CPU threads work on the parts of the model that run on the CPU. Leave empty for automatic, which suits most machines. It matters most when some layers or experts stay in system RAM; more threads than you have physical cores rarely helps."
     },
     {
       "key": "flash_attn",
@@ -59,7 +59,7 @@
         "off"
       ],
       "category": "performance",
-      "help": "A faster, more memory-efficient way to compute attention (the model's core math). 'auto' enables it when your hardware supports it."
+      "help": "A faster way to compute attention (the step where each token looks back over earlier text) that also uses less memory, especially with long context. 'auto' turns it on when your hardware and model support it. Compressing the V half of conversation memory needs it on."
     },
     {
       "key": "cache_type_k",
@@ -75,7 +75,7 @@
         "q4_0"
       ],
       "category": "performance",
-      "help": "Compresses half of the conversation memory (the 'K' cache). q8_0 halves it with minimal quality loss \u2014 useful for long contexts on small GPUs."
+      "help": "Conversation memory (the KV cache) is stored in two halves, keys (K) and values (V); this sets the format for the K half. q8_0 halves its size with very little quality loss. q4_0 shrinks it further but costs more accuracy. f16 is full quality; bf16 and f32 are rarely useful. Handy for long contexts on small GPUs."
     },
     {
       "key": "cache_type_v",
@@ -91,7 +91,16 @@
         "q4_0"
       ],
       "category": "performance",
-      "help": "Compresses the other half of the conversation memory (the 'V' cache). Usually set to match the K cache setting. Requires flash attention on."
+      "help": "The format for the V (values) half of conversation memory. Usually set it to match the K setting: q8_0 halves the size with very little quality loss, and q4_0 shrinks it further at a higher accuracy cost. Any compressed choice here needs flash attention on."
+    },
+    {
+      "key": "use_mtp",
+      "flag": null,
+      "label": "Use MTP (multi-token prediction)",
+      "type": "bool",
+      "default": false,
+      "category": "performance",
+      "help": "Some models, such as Qwen3.5, Qwen3-Next, GLM-4.5-Air and DeepSeek V3.2, include extra layers that guess the next few tokens ahead. The main model checks those guesses all at once and keeps the ones it agrees with, so text often arrives noticeably faster, with the same quality. Reading long prompts gets a little slower, and the extra layers use a little more memory. The launcher checks your GGUF file (and any separate mtp-*.gguf head next to it) and your installed llama.cpp, and tells you if MTP needs a llama.cpp update."
     },
     {
       "key": "batch_size",
@@ -103,7 +112,7 @@
       "max": 8192,
       "category": "advanced",
       "advanced": true,
-      "help": "How much of your prompt is processed per gulp. Bigger is faster for long prompts but uses more memory. The default is fine for almost everyone."
+      "help": "The largest slice of a prompt llama.cpp takes in one go while reading it. Bigger slices read long prompts faster but need more temporary memory. The default suits almost everyone."
     },
     {
       "key": "parallel",
@@ -114,7 +123,7 @@
       "min": 1,
       "max": 16,
       "category": "performance",
-      "help": "How many chat requests are handled at once. Note: the context window gets divided between them, so 4 parallel slots each get a quarter of the context."
+      "help": "How many requests llama.cpp works on at the same time (called slots). The context window is divided between them: 4 slots each get a quarter of it. Keep 1 for personal use unless several apps or people need answers at once."
     },
     {
       "key": "mlock",
@@ -124,7 +133,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Prevents the operating system from swapping the model out of RAM to disk. Helps keep speed steady on Macs; needs enough free RAM to hold the whole model."
+      "help": "Asks the operating system to keep the whole model in RAM so it is never pushed out to disk while idle. That keeps speed steady when other programs compete for memory. It needs enough free RAM for the entire model."
     },
     {
       "key": "no_mmap",
@@ -134,7 +143,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Reads the whole model file into RAM up front instead of streaming it from disk as needed. Slower start, sometimes smoother generation."
+      "help": "Reads the whole model file into RAM at startup instead of loading parts from disk as they are needed. Startup takes longer, but there are no pauses later while pieces load from disk. Worth trying when the model is on a slow drive."
     },
     {
       "key": "split_mode",
@@ -150,7 +159,7 @@
       ],
       "category": "advanced",
       "advanced": true,
-      "help": "Layer splits whole layers and their KV cache (conversation memory) across GPUs. Row is deprecated and keeps KV on the main GPU. None uses only the main GPU. Tensor is experimental, splits tensors across cards, disables automatic fitting, and does not support several MoE/hybrid architectures."
+      "help": "How the model is divided when you have more than one GPU. Layer (default) gives each GPU whole layers plus their share of conversation memory, and is the most reliable choice. Row splits each layer across the cards; it is deprecated and keeps conversation memory on the main GPU. None uses only the main GPU. Tensor is experimental: it splits individual tensors across the cards, turns off automatic fitting, and doesn't support several MoE and hybrid model types."
     },
     {
       "key": "no_kv_offload",
@@ -160,7 +169,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Forces the conversation memory (KV cache) into system RAM instead of the GPU. WARNING: this causes a severe speed hit \u2014 often 20\u201350% slower at moderate context, and 2\u00d7 or worse at long context \u2014 because the GPU has to fetch prior-token data across the PCIe slot on every generated word. Only use this if the model fits on the GPU but the KV cache doesn't, and you've already tried compressing conversation memory (cache-type-k/v)."
+      "help": "Keeps conversation memory (the KV cache) in system RAM instead of on the GPU. This carries a heavy speed penalty, often 20\u201350% slower at moderate context and 2x or worse at long context, because the GPU has to fetch earlier text over the PCIe slot for every generated word. Use it only when the model fits on the GPU but its conversation memory doesn't, and you've already tried compressing that memory (the K and V cache settings)."
     },
     {
       "key": "no_mmproj",
@@ -169,7 +178,7 @@
       "type": "bool",
       "default": false,
       "category": "performance",
-      "help": "For models that can also see images: turn this on if you only need text chat. It stops llama.cpp from loading the vision part (the 'mmproj' file), saving memory. Leave off if you want to send images to the model."
+      "help": "For models that can also see images: turn this on if you only need text chat. It stops llama.cpp from loading the vision part (the 'mmproj' file), which saves memory. Leave it off if you want to send images to the model."
     },
     {
       "key": "jinja",
@@ -178,7 +187,7 @@
       "type": "bool",
       "default": true,
       "category": "essential",
-      "help": "Formats conversations the exact way the model was trained to expect (using the template embedded in the model file). Leave on \u2014 turning it off often causes weird replies."
+      "help": "Formats conversations exactly the way the model was trained to expect, using the chat template stored in the model file. Leave it on; turning it off often causes odd or broken replies."
     },
     {
       "key": "alias",
@@ -187,7 +196,7 @@
       "type": "string",
       "default": null,
       "category": "api",
-      "help": "A friendly name apps will see instead of the file name. Optional."
+      "help": "A short, friendly name apps see and send instead of the file name. Optional."
     },
     {
       "key": "api_key",
@@ -196,7 +205,7 @@
       "type": "string",
       "default": null,
       "category": "api",
-      "help": "If set, apps must send this key to use the server. Recommended if other devices on your network can reach this computer."
+      "help": "If set, apps must send this key, like a password, to use the server. Recommended when other devices can reach this computer, for example with local network access turned on in Settings."
     },
     {
       "key": "device",
@@ -206,7 +215,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Comma-separated llama.cpp backend names, such as CUDA0,CUDA1. Use names detected below; these are not necessarily NVIDIA card indexes. Leave unset for engine selection."
+      "help": "Which GPUs or other accelerators llama.cpp uses, by llama.cpp's own device names such as CUDA0,CUDA1 (detected below). This numbering can differ from the GPU numbers nvidia-smi shows. Leave it unset to let llama.cpp use every device it finds."
     },
     {
       "key": "tensor_split",
@@ -216,7 +225,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Relative weights, not exact layer counts: 40,40,40 gives three equal shares; 2,1 requests twice as much on the first device. Provide one positive number per selected device. Per-card fit is not guaranteed."
+      "help": "How much of the model each selected GPU gets, as relative shares rather than exact amounts: 1,1 splits evenly and 2,1 puts twice as much on the first GPU. Give one number per selected GPU. Useful when cards have different amounts of memory, but the launcher can't guarantee each card's share fits."
     },
     {
       "key": "main_gpu",
@@ -226,7 +235,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Index in llama.cpp\u2019s selected device list. Used by none mode, or for KV cache in deprecated row mode; ignored by layer mode.",
+      "help": "Which GPU does the work when the split style is None, counted by its position in llama.cpp's device list (starting at 0). The deprecated Row mode also keeps conversation memory there. Layer mode ignores this setting.",
       "min": 0
     },
     {
@@ -237,7 +246,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "MoE (mixture of experts) models activate selected subnetworks per token. Keep all expert weights in system RAM to save GPU memory, potentially reducing speed. Do not combine with a positive CPU expert layer count."
+      "help": "For mixture-of-experts (MoE) models, which contain many 'expert' networks but use only a few for each token. This keeps all expert weights in system RAM while the rest of the model stays on the GPU, so very large MoE models fit on a small GPU. Generation is slower than with everything on the GPU. Don't combine it with CPU expert layer count."
     },
     {
       "key": "n_cpu_moe",
@@ -247,7 +256,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Keep expert weights of the first N layers in CPU RAM. Lower N moves more experts toward the GPU when GPU layers allow it; higher N saves GPU memory but can slow generation. Exact savings depend on the model.",
+      "help": "A middle ground to CPU MoE: keeps only the expert weights of the first N layers in system RAM. Raise N until the model fits. Each step down puts more experts back on the GPU and speeds up generation. How much memory each layer saves depends on the model.",
       "min": 0
     },
     {
@@ -258,7 +267,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Tokens processed together inside a prompt batch. Smaller groups reduce temporary memory needs, often at the cost of prompt processing speed.",
+      "help": "The piece of each prompt slice (see Prompt chunk size) that is actually computed at once. Smaller pieces need less temporary GPU memory, which helps when a model barely fits, but prompts are read more slowly. Leave empty for the default.",
       "min": 1
     },
     {
@@ -269,7 +278,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "NUMA (non-uniform memory access) means CPUs reach nearby memory faster. Distribute spreads threads over visible nodes; isolate keeps threads on the starting node; numactl respects a CPU map set externally. Optional on multi-socket hosts; no cross-node benefit with one visible node.",
+      "help": "On computers with more than one CPU socket (and a few very large single CPUs), each group of cores has its own bank of memory, called a NUMA node, and reaching another node's memory is slower. This chooses where llama.cpp's CPU threads run. Distribute spreads them evenly over all nodes; isolate keeps them on the node where llama.cpp started; numactl follows a CPU layout you set yourself with the numactl tool. It only matters when part of the model runs on the CPU, and single-node machines, which includes most desktops, see no benefit.",
       "choices": [
         null,
         "distribute",
@@ -285,7 +294,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Linux native engines only. Runs numactl --interleave=all to spread memory allocations across allowed nodes. This changes memory placement, not CPU affinity (where threads run). Benchmark on multi-node machines; no cross-node benefit with one node."
+      "help": "On computers with more than one CPU socket (and a few very large single CPUs), each group of cores has its own bank of memory, called a NUMA node, and reaching another node's memory is slower. This spreads llama.cpp's memory evenly across all nodes (Linux only; needs the numactl tool). That can steady the speed when a large part of the model runs from system RAM, but it can also be slower than keeping memory next to the cores that use it. It doesn't change which cores do the work. It has no effect on single-node machines, which includes most desktops, and it's worth measuring before keeping."
     },
     {
       "key": "extra_args",
@@ -295,7 +304,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Any additional llama-server command-line flags, exactly as you'd type them in a terminal. For experts; the app passes them through unchanged."
+      "help": "More llama-server command-line flags, typed exactly as you would in a terminal (e.g. --seed 42). They go at the end of the command, so they override the settings above. The launcher can't check them, so its memory estimate becomes a rough guide only."
     }
   ]
 }

@@ -3,6 +3,35 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
+## 2026-09-28 — Unreleased
+
+### Added: Use MTP (multi-token prediction) for vLLM and llama.cpp
+
+- One **Use MTP** checkbox per engine. The launcher works out the flags the
+  installed engine accepts, so nothing needs to be typed by hand:
+  - **vLLM:** the method names and supported model families are read from the
+    selected runtime's own source files (without importing vLLM). vLLM 0.11+
+    gets the generic `mtp`; older releases get the family name they expect
+    (`deepseek_mtp` for DeepSeek-V3, MiMo and GLM-4.5, `qwen3_next_mtp`,
+    `ernie_mtp`). `num_speculative_tokens` comes from the model's MTP layer count.
+  - **llama.cpp:** `--spec-type draft-mtp --spec-draft-n-max 3`, detected from
+    `llama-server --help` and `--version`. The GGUF header is read to confirm the
+    file really has MTP layers (sharded files included), and a separate
+    `mtp-*.gguf` head next to the model is passed with `--spec-draft-model`.
+    Per-architecture support starts at the build where llama.cpp added it
+    (checked through build 11235).
+- When the model has MTP layers but the installed engine can't use them, the
+  setting turns red, launch is blocked, and the message says to update the
+  engine. A model without MTP layers is told to turn MTP off instead.
+- The GGUF picker no longer defaults to an `mtp-*.gguf` head file as the model.
+
+### Changed: plainer setting explanations
+
+- Every setting's help text for both engines was rewritten to say what the
+  setting does and what it trades off, with NUMA, CUDA graphs, tensor
+  parallelism, KV cache and backend choices explained in plain terms. The NUMA
+  summary on the Launch screen and the NUMA advice messages were reworded too.
+
 ## 2026-09-27 — v0.4.0
 
 Engine updates from source, multi-GPU and memory placement for llama.cpp, and

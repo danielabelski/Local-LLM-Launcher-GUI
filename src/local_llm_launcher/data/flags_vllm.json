@@ -11,7 +11,7 @@
       "min": 1024,
       "max": 65535,
       "category": "essential",
-      "help": "The network port the server listens on. Apps connect to http://localhost:PORT/v1. Change it only if another program already uses this port."
+      "help": "The network port the server answers on. Apps connect to http://localhost:PORT/v1. Change it only if another program already uses this port; if the port is taken when you launch, the launcher picks the next free one."
     },
     {
       "key": "max_model_len",
@@ -23,7 +23,7 @@
       "max": 262144,
       "step": 1024,
       "category": "essential",
-      "help": "How much text (in tokens — roughly 3/4 of a word each) the model can keep in mind at once: your prompt plus its answer. Bigger needs more GPU memory. 8192 is plenty for chat; raise it for long documents."
+      "help": "The most text the model can work with at once: your prompt, the conversation so far, and its reply, counted in tokens (a token is about ¾ of a word). A bigger window needs more GPU memory for conversation memory (the KV cache). 8192 covers normal chat; raise it for long documents or large code files."
     },
     {
       "key": "gpu_memory_utilization",
@@ -35,7 +35,7 @@
       "max": 0.98,
       "step": 0.01,
       "category": "essential",
-      "help": "The fraction of each GPU's memory vLLM is allowed to claim. Higher fits bigger models but can fail to start if your desktop is also using the GPU. 0.85 is the safe choice on consumer cards."
+      "help": "The share of each GPU's memory vLLM claims at startup, for the model plus conversation memory. vLLM takes this whole amount up front, even if it ends up needing less. Higher values leave room for a longer context or more simultaneous requests; too high and the launch fails if your desktop or another program is using the same GPU. 0.85 is a safe starting point on a card that also drives a monitor."
     },
     {
       "key": "tensor_parallel_size",
@@ -46,7 +46,7 @@
       "min": 1,
       "max": 8,
       "category": "essential",
-      "help": "Splits the model across this many GPUs (called tensor parallelism). Use all your GPUs for big models. Must divide evenly into your GPU count."
+      "help": "Splits every layer of the model across this many GPUs (tensor parallelism), so a model too big for one card can run, and generation usually gets faster too. The GPUs exchange data on every step, so matched cards on fast connections work best. It can't exceed the number of GPUs you have, and the model has to divide evenly across them; 1, 2, 4 or 8 are the safe choices."
     },
     {
       "key": "max_num_seqs",
@@ -57,7 +57,7 @@
       "min": 1,
       "max": 256,
       "category": "performance",
-      "help": "How many chat requests the server handles at the same time. If it's just you, 1-4 keeps memory use low and predictable. Higher values reserve more GPU memory."
+      "help": "The most requests vLLM works on at the same time. Each active request holds its own conversation memory, so higher values reserve more GPU memory. If it's just you, 1–4 keeps memory use low and predictable; raise it when several people or batch jobs share the server."
     },
     {
       "key": "dtype",
@@ -68,7 +68,7 @@
       "choices": ["auto", "bfloat16", "float16"],
       "category": "advanced",
       "advanced": true,
-      "help": "The number format used for calculations. 'auto' picks the right one for your model and GPU — leave it alone unless you know why you're changing it."
+      "help": "The number format for the model's calculations. 'auto' uses the format the model was published in (usually bfloat16) and suits almost everyone. float16 is for older GPUs without bfloat16 support (NVIDIA cards older than the RTX 30 series); running a bfloat16 model in float16 can occasionally overflow and produce errors or nonsense."
     },
     {
       "key": "quantization",
@@ -79,7 +79,7 @@
       "choices": [null, "awq", "awq_marlin", "gptq", "fp8", "bitsandbytes", "compressed-tensors", "modelopt"],
       "category": "advanced",
       "advanced": true,
-      "help": "Forces a specific compression format instead of letting vLLM read it from the model files. Almost always leave this empty — vLLM auto-detects, and a wrong value makes the launch fail with an error."
+      "help": "Forces vLLM to treat the weights as a specific compressed (quantized) format instead of reading the format from the model's files. Normally leave this empty: vLLM detects it, and a wrong value stops the launch with an error. The main exception is 'fp8' on a full-precision model, which compresses it while loading to roughly half the memory, at a small cost in quality; it runs best on RTX 40-series or newer GPUs."
     },
     {
       "key": "kv_cache_dtype",
@@ -89,7 +89,16 @@
       "default": "auto",
       "choices": ["auto", "fp8"],
       "category": "performance",
-      "help": "Compresses the KV cache (the GPU memory that holds the conversation so far). 'fp8' roughly halves that memory with little quality loss — a great trick when a model barely fits."
+      "help": "Stores conversation memory (the KV cache, which holds the model's working notes on everything it has read so far) in 8-bit 'fp8' instead of 16-bit. That roughly halves its size, so a longer context or more simultaneous requests fit, usually with only a small loss in accuracy. A good first thing to try when a model barely fits."
+    },
+    {
+      "key": "use_mtp",
+      "flag": null,
+      "label": "Use MTP (multi-token prediction)",
+      "type": "bool",
+      "default": false,
+      "category": "performance",
+      "help": "Some models, such as DeepSeek-V3, GLM-4.5, Qwen3-Next and MiMo, include extra layers that guess the next few tokens ahead. The main model checks those guesses all at once and keeps the ones it agrees with, so text often arrives noticeably faster, with the same quality. The gain is biggest for one user at a time and shrinks when many requests run at once, and the extra layers use a little more GPU memory. The launcher checks your model and installed vLLM, picks the setting that version expects, and tells you if MTP needs a vLLM update."
     },
     {
       "key": "cpu_offload_gb",
@@ -101,7 +110,7 @@
       "max": 64,
       "category": "advanced",
       "advanced": true,
-      "help": "Moves part of the model into regular RAM when it doesn't fit in GPU memory. It makes impossible models run — but around 10x slower, because data crawls back and forth over the PCIe slot every step. Last resort only."
+      "help": "Keeps this many GB of each GPU's share of the model in system RAM and copies it to the GPU when needed. This lets a model that is slightly too big run at all, but every generated token waits on those copies over the PCIe slot, so expect generation to be many times slower (around 10x). A last resort: a smaller or more compressed version of the model is usually the better choice."
     },
     {
       "key": "enforce_eager",
@@ -111,7 +120,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Turns off a speed optimization (CUDA graphs) to save a little GPU memory during startup. Generation gets noticeably slower. Only use when a model fails to start at the very last step."
+      "help": "Turns off CUDA graphs, a speed-up where vLLM records the GPU's work once at startup and replays it for every token. Recording takes extra GPU memory and startup time, so turning it off starts faster and saves a little memory, but generation gets noticeably slower. Use it only when a model runs out of memory right at the end of startup, or while troubleshooting."
     },
     {
       "key": "enable_prefix_caching",
@@ -121,7 +130,7 @@
       "type": "bool",
       "default": true,
       "category": "performance",
-      "help": "Remembers the start of earlier prompts so repeated requests (like a long system prompt) don't get re-processed every time. Almost always a free speed win."
+      "help": "Keeps the already-processed start of earlier prompts in spare GPU memory and reuses it when a new request begins the same way, such as a long system prompt, a shared document, or an ongoing chat. That text isn't re-read, so replies start sooner. It only uses memory that would otherwise sit idle, so leave it on unless troubleshooting."
     },
     {
       "key": "enable_chunked_prefill",
@@ -131,7 +140,7 @@
       "type": "bool",
       "default": true,
       "category": "performance",
-      "help": "Processes long prompts in slices so the server stays responsive while reading them. Good default; turn off only when troubleshooting."
+      "help": "Reads long prompts in slices, taking turns with generating text for other requests, so one long prompt doesn't freeze everyone else's replies. It also limits the temporary memory a long prompt needs. Leave it on; turn it off only when troubleshooting."
     },
     {
       "key": "max_num_batched_tokens",
@@ -143,7 +152,7 @@
       "max": 32768,
       "category": "advanced",
       "advanced": true,
-      "help": "How much text the engine chews through per internal step. Leave empty for automatic. Bigger is faster on long prompts but uses more memory."
+      "help": "The most tokens vLLM processes in one step, across all requests. Larger values read long prompts faster but need more temporary GPU memory; smaller values keep other users' replies flowing while a long prompt is being read. Leave empty for vLLM's automatic choice."
     },
     {
       "key": "language_model_only",
@@ -152,7 +161,7 @@
       "type": "bool",
       "default": false,
       "category": "performance",
-      "help": "For models that can also see images or hear audio: turn this on if you only need text chat. It skips loading the image/audio parts of the model, which frees up GPU memory — often enough to make a model fit that otherwise wouldn't. Leave off if you want to send images or audio."
+      "help": "For models that can also see images or hear audio: turn this on if you only need text chat. It skips loading the image and audio parts of the model, which frees GPU memory, often enough to make a model fit that otherwise wouldn't. Leave it off if you want to send images or audio."
     },
     {
       "key": "trust_remote_code",
@@ -161,7 +170,7 @@
       "type": "bool",
       "default": false,
       "category": "essential",
-      "help": "Some newer models ship their own Python code that must run for the model to work. Only enable for models from sources you trust — it executes that code on your machine."
+      "help": "Some models need Python code from their own repository to load. This lets vLLM download that code and run it on your computer with your permissions, just like installing a program from that author. Turn it on only for models from publishers you trust. If a model needs it, the launch fails with an error that mentions trust_remote_code."
     },
     {
       "key": "reasoning_parser",
@@ -171,7 +180,7 @@
       "default": null,
       "choices": [null, "qwen3", "deepseek_r1", "gemma4", "granite"],
       "category": "essential",
-      "help": "For 'thinking' models (ones that reason step-by-step before answering): tells the server how to separate the thinking from the final answer. Pick the one matching your model family, or leave empty for normal models."
+      "help": "For 'thinking' models, which write out step-by-step reasoning before the answer. The parser separates that reasoning from the final reply so apps can show or hide it. Choose the one for your model's family; a mismatched one can stop the launch or mix the reasoning into the answer. Leave empty for ordinary models."
     },
     {
       "key": "tool_call_parser",
@@ -182,7 +191,7 @@
       "choices": [null, "hermes", "mistral", "llama3_json", "qwen3_coder", "gemma4"],
       "category": "advanced",
       "advanced": true,
-      "help": "Lets the model call functions/tools in apps that support it. Pick the parser matching your model family. Leave empty if you just want chat."
+      "help": "Lets the model use tools (functions an app offers, such as web search or a calculator) in apps that support it. The parser converts the model's tool requests into the standard format apps expect. Pick the one for your model's family; leave empty for plain chat."
     },
     {
       "key": "served_model_name",
@@ -191,7 +200,7 @@
       "type": "string",
       "default": null,
       "category": "api",
-      "help": "A friendly name apps will see instead of the long repository path. Optional."
+      "help": "A short, friendly name apps see and send instead of the long repository path. Optional."
     },
     {
       "key": "api_key",
@@ -200,7 +209,7 @@
       "type": "string",
       "default": null,
       "category": "api",
-      "help": "If set, apps must send this key to use the server. Recommended if other devices on your network can reach this computer."
+      "help": "If set, apps must send this key, like a password, to use the server. Recommended when other devices can reach this computer, for example with local network access turned on in Settings."
     },
     {
       "key": "device_ids",
@@ -209,7 +218,7 @@
       "type": "string",
       "default": null,
       "category": "essential",
-      "help": "Comma-separated GPU numbers as nvidia-smi lists them (e.g. '0,1' for both, '1' for just the second card). Useful to keep your monitor's GPU free. Leave empty to use all GPUs.",
+      "help": "Which GPUs vLLM may use, by the numbers nvidia-smi shows (e.g. '0,1' for both, '1' for only the second card). Leaving out the card that drives your monitor keeps its memory free for the desktop and avoids startup failures. Leave empty to use all GPUs.",
       "env_var": "CUDA_VISIBLE_DEVICES"
     },
     {
@@ -220,7 +229,7 @@
       "default": null,
       "category": "api",
       "secret": true,
-      "help": "Needed only for gated models (like Llama) that require accepting a license on huggingface.co first. Create one at huggingface.co/settings/tokens.",
+      "help": "Needed only for gated models (such as Llama) that ask you to accept a license on huggingface.co before downloading. Create a token at huggingface.co/settings/tokens.",
       "env_var": "HF_TOKEN"
     },
     {
@@ -231,7 +240,7 @@
       "default": false,
       "category": "advanced",
       "advanced": true,
-      "help": "Linux native engines only. Runs numactl --interleave=all to spread memory allocations across allowed nodes. This changes memory placement, not CPU affinity (where threads run). Benchmark on multi-node machines; no cross-node benefit with one node."
+      "help": "On computers with more than one CPU socket (and a few very large single CPUs), each group of cores has its own bank of memory, called a NUMA node, and reaching another node's memory is slower. This spreads vLLM's system-RAM use evenly across all nodes (Linux only; needs the numactl tool). That can steady the speed when a large part of the model sits in system RAM, but it can also be slower than keeping memory next to the cores that use it. It doesn't change which cores do the work. It has no effect on single-node machines, which includes most desktops, and it's worth measuring before keeping."
     },
     {
       "key": "extra_args",
@@ -241,7 +250,7 @@
       "default": null,
       "category": "advanced",
       "advanced": true,
-      "help": "Any additional vLLM command-line flags, exactly as you'd type them in a terminal. For experts; the app passes them through unchanged."
+      "help": "More vLLM command-line flags, typed exactly as you would in a terminal (e.g. --seed 42). They go at the end of the command, so they override the settings above. The launcher can't check them, so its memory estimate becomes a rough guide only."
     },
     {
       "key": "linear_backend",
@@ -260,7 +269,7 @@
       ],
       "category": "performance",
       "advanced": true,
-      "help": "Implementation for matrix calculations. Automatic lets vLLM choose for the model. b12x requires the optional vllm[b12x] package; b12x and flashinfer_b12x target SM120/SM121 GPUs (including RTX 5060 Ti). Compatible NVFP4 models can benefit automatically in vLLM 0.30; overrides do not guarantee faster performance."
+      "help": "Chooses the code that runs the model's main matrix math. Automatic lets vLLM pick the best one for your model and GPU; leave it there unless you are comparing speeds. b12x and flashinfer_b12x are for Blackwell GPUs with compute capability 12.0 or 12.1 (such as the RTX 5060 Ti), and b12x also needs the optional vllm[b12x] package. From vLLM 0.30, compatible NVFP4 models get the fast path automatically, and forcing a backend doesn't guarantee more speed."
     },
     {
       "key": "moe_backend",
@@ -278,7 +287,7 @@
       ],
       "category": "performance",
       "advanced": true,
-      "help": "Implementation for mixture-of-experts models (models that select specialized expert networks). b12x requires vllm[b12x], an SM120/SM121 GPU and compatible NVFP4 or MXFP4 expert weights. It does not support expert parallelism (distributing experts across workers). Leave automatic unless comparing compatible implementations."
+      "help": "For mixture-of-experts (MoE) models, which contain many smaller 'expert' networks and use only a few of them for each token. This chooses the code that runs those experts. Automatic is best unless you are comparing speeds. b12x needs the vllm[b12x] package, a GPU with compute capability 12.0 or 12.1, and expert weights in NVFP4 or MXFP4 format, and it can't be combined with expert parallelism (spreading the experts across GPUs)."
     },
     {
       "key": "attention_backend",
@@ -294,7 +303,7 @@
       ],
       "category": "performance",
       "advanced": true,
-      "help": "Implementation for attention (connecting tokens to earlier context). B12X requires vllm[b12x], an SM120/SM121 GPU, BF16 model computation and automatic/BF16 or FP8 E4M3 KV cache (stored attention data). Context parallelism and latent attention models are unsupported. Automatic preserves engine selection."
+      "help": "Chooses the code for attention, the step where each new token looks back over the text so far. Automatic lets vLLM choose; leave it unless you are comparing speeds. B12X needs the vllm[b12x] package, a GPU with compute capability 12.0 or 12.1, bfloat16 math, and conversation memory set to automatic, bfloat16 or fp8. It doesn't work with context parallelism or with latent-attention (MLA) models such as DeepSeek."
     }
   ]
 }

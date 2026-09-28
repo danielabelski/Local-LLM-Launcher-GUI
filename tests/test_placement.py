@@ -66,10 +66,10 @@ def test_capability_probe_cached_by_binary_revision(tmp_path, monkeypatch):
     hardware._llama_capabilities_cached.cache_clear()
     assert hardware.llama_capabilities(str(binary))['devices'][0]['name'] == 'Vulkan0'
     assert hardware.llama_capabilities(str(binary))['load_mode'] is True
-    assert len(calls)==2
+    assert len(calls)==3  # --help, --list-devices, --version
     binary.write_text('new binary')
     hardware.llama_capabilities(str(binary))
-    assert len(calls)==4
+    assert len(calls)==6
 
 
 def test_placement_api_rejects_before_launch(monkeypatch):
@@ -92,7 +92,7 @@ def test_numa_advice_without_automatic_policy(count):
     hw={**DUAL_5060TI,'numa':{'node_count':count}}
     report=advisor.advise('llamacpp',GGUF,{'numa':'distribute'},hw)
     message=report['flags']['numa']['message']
-    assert ('no cross-node benefit' in message)==(count==1)
+    assert ('nothing to spread across' in message)==(count==1)
     argv=llamacpp.build(GGUF,{})['argv']
     assert '--numa' not in argv and '--interleave=all' not in argv
 

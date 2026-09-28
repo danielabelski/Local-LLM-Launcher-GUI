@@ -291,12 +291,12 @@ def detect_numa(online=None, status=None) -> Dict[str, Any]:
 @lru_cache(maxsize=16)
 def _llama_capabilities_cached(binary: str, mtime: int) -> Dict[str, Any]:
     import re
-    result = {'load_mode': False, 'devices': []}
+    result = {'load_mode': False, 'devices': [], 'mtp': None, 'build': None}
     env = dict(os.environ)
     directory = os.path.dirname(binary)
     if directory:
         env['LD_LIBRARY_PATH'] = directory + os.pathsep + env.get('LD_LIBRARY_PATH', '')
-    for option in ('--help', '--list-devices'):
+    for option in ('--help', '--list-devices', '--version'):
         try:
             out = subprocess.run([binary, option], capture_output=True, text=True, timeout=8, env=env)
             if out.returncode != 0:
@@ -304,12 +304,21 @@ def _llama_capabilities_cached(binary: str, mtime: int) -> Dict[str, Any]:
             output = out.stdout + '\n' + out.stderr
             if option == '--help':
                 result['load_mode'] = bool(re.search(r'(?<![\w-])--load-mode(?=\s|=|$)', output))
+                # MTP is one value of --spec-type's list (build 9180+).
+                result['mtp'] = bool(re.search(r'(?<![\w-])--spec-type\s+\S*(?<![\w-])draft-mtp(?![\w-])', output))
+            elif option == '--version':
+                # "version: 0.5.0-dev (build 11235, commit …)" or older "version: 9180 (2555826)".
+                match = re.search(r'\(build (\d+)', output) or re.search(r'version: (\d+) \(', output)
+                result['build'] = int(match[1]) if match else None
             else:
                 result['devices'] = [{'name': m.group(1), 'description': m.group(2)}
                                      for line in output.splitlines()
                                      if (m := re.match(r'^\s*([A-Za-z][A-Za-z0-9_]*\d+):\s+(.+)$', line))]
         except (OSError, subprocess.SubprocessError):
             pass
+    # The build number counts git commits: 0 without git, tiny in a shallow clone.
+    if result['build'] is not None and result['mtp'] and result['build'] < 9180:
+        result['build'] = None
     return result
 
 

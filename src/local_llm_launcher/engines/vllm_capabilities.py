@@ -44,8 +44,35 @@ try:
     version = importlib.metadata.version('vllm')
 except importlib.metadata.PackageNotFoundError:
     version = None
+# MTP method names and model families come from the installed source text, read
+# without importing vLLM (that would import torch): the names changed across
+# releases, so no version table can be trusted.
+mtp = None
+try:
+    import re
+    spec = importlib.util.find_spec('vllm')
+    for root in (spec.submodule_search_locations or []) if spec else []:
+        for relative in ('config/speculative.py', 'config/__init__.py', 'config.py'):
+            try:
+                with open(os.path.join(root, relative), encoding='utf-8') as stream:
+                    text = stream.read()
+            except OSError:
+                continue
+            if 'class SpeculativeConfig' not in text:
+                continue
+            block = (re.search(r'MTPModelTypes\\s*=\\s*Literal\\[(.*?)\\]', text, re.S)
+                     or re.search(r'SpeculativeMethod\\s*=\\s*Literal\\[(.*?)\\]', text, re.S))
+            body = re.search(r'def hf_config_override\\(.*?(?=\\n    (?:@|def )|\\Z)', text, re.S)
+            mtp = {'methods': sorted({name for name in re.findall(r'["\\']([a-z0-9_]+)["\\']', block.group(1))
+                                      if name.endswith('mtp')}) if block else [],
+                   'models': sorted(set(re.findall(r'["\\']([A-Za-z0-9_.-]+)["\\']', body.group(0)))) if body else None}
+            break
+        if mtp:
+            break
+except Exception:
+    mtp = None
 print(json.dumps({'version': version, 'b12x': importlib.util.find_spec('b12x') is not None,
-                  'paths': paths}))
+                  'mtp': mtp, 'paths': paths}))
 """
 
 
@@ -81,7 +108,7 @@ def _identity(path: str | None) -> tuple:
 
 def _native(binary: str, interpreter: str | None) -> tuple[dict, tuple]:
     stamps: tuple = ()
-    result = {'version': None, 'flags': None, 'choices': {}, 'b12x': None,
+    result = {'version': None, 'flags': None, 'choices': {}, 'b12x': None, 'mtp': None,
               'source': binary, 'message': ''}
     unknown = []
     # Metadata first: its import-path stamps must predate the slow help run, so an
@@ -97,6 +124,8 @@ def _native(binary: str, interpreter: str | None) -> tuple[dict, tuple]:
                         result['version'] = metadata['version']
                     if isinstance(metadata.get('b12x'), bool):
                         result['b12x'] = metadata['b12x']
+                    if isinstance(metadata.get('mtp'), dict):
+                        result['mtp'] = metadata['mtp']
                     stamps = tuple((path, mtime) for path, mtime in metadata.get('paths') or ()
                                    if isinstance(path, str) and isinstance(mtime, int))
         except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
@@ -179,7 +208,7 @@ def probe(engine_mode: str, binary: str = 'vllm', *, wait: bool = True) -> dict:
     evidence for this runtime (or unknown) and refresh it in the background.
     """
     if engine_mode == 'vllm-docker':
-        return {'version': None, 'flags': None, 'choices': {}, 'b12x': None, 'source': 'docker',
+        return {'version': None, 'flags': None, 'choices': {}, 'b12x': None, 'mtp': None, 'source': 'docker',
                 'message': 'Docker image compatibility is unverified. Check vLLM version and install optional b12x inside the image; host packages do not apply.'}
     resolved = shutil.which(binary) or os.path.abspath(binary)
     interpreter = _interpreter(resolved)
@@ -195,6 +224,6 @@ def probe(engine_mode: str, binary: str = 'vllm', *, wait: bool = True) -> dict:
     else:
         _refresh_in_background(key, resolved, interpreter)
         result = entry[1] if entry else {
-            'version': None, 'flags': None, 'choices': {}, 'b12x': None, 'source': resolved,
+            'version': None, 'flags': None, 'choices': {}, 'b12x': None, 'mtp': None, 'source': resolved,
             'message': 'The selected vLLM runtime is still being checked; advice will update shortly.'}
     return copy.deepcopy(result)  # callers may add advice; the cache stays untouched
