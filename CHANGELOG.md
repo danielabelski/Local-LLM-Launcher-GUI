@@ -22,7 +22,8 @@ when the work was done.
     (checked through build 11235).
 - When the model has MTP layers but the installed engine can't use them, the
   setting turns red, launch is blocked, and the message says to update the
-  engine. A model without MTP layers is told to turn MTP off instead.
+  engine or turn off MTP to run the model without it. A model without MTP
+  layers is told to turn MTP off instead.
 - The GGUF picker no longer defaults to an `mtp-*.gguf` head file as the model.
 
 ### Changed: plainer setting explanations

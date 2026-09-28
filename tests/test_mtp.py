@@ -69,6 +69,7 @@ def test_old_runtime_is_refused_with_update_advice(model, evidence, expected):
     assert result["level"] == "red" and result["args"] == []
     assert result["message"].startswith(expected)
     assert "pip install -U vllm" in result["message"]
+    assert result["message"].endswith("Or turn off MTP to run the model without it.")
 
 
 def test_model_without_mtp_layers_is_refused():
@@ -83,7 +84,7 @@ def test_unreadable_runtime_assumes_generic_name_and_says_so():
     assert spec(result)["method"] == "mtp"
     assert "0.11 or newer" in result["message"]
     red = mtp.vllm("vllm-docker", DEEPSEEK, ON, {**V085, "version": None})
-    assert "docker pull vllm/vllm-openai:latest" in red["message"]
+    assert "docker pull vllm/vllm-openai:latest. Or turn off MTP" in red["message"]
 
 
 def test_raw_speculative_config_is_noted_and_off_means_nothing():
@@ -242,6 +243,7 @@ def test_llama_refuses_with_update_advice(tmp_path, capabilities, arch, expected
     result = mtp.llamacpp(gguf_model(write_gguf(tmp_path / 'm.gguf', arch)), ON, capabilities)
     assert result['level'] == 'red' and result['args'] == []
     assert result['message'].startswith(expected) and 'Update llama.cpp' in result['message']
+    assert result['message'].endswith('Or turn off MTP to run the model without it.')
 
 
 def test_newer_build_than_checked_is_only_a_warning(tmp_path):

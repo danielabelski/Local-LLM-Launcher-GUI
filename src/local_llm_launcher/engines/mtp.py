@@ -22,9 +22,11 @@ _LEGACY_VLLM_METHODS = {
 }
 # config.json keys that count a model's MTP layers, across the families vLLM supports.
 _LAYER_KEYS = ('num_nextn_predict_layers', 'mtp_num_hidden_layers', 'num_mtp_modules')
+# An engine update is never the only way forward: the model runs fine without MTP.
+_RUN_WITHOUT = ' Or turn off MTP to run the model without it.'
 _VLLM_UPDATE = {
-    'vllm-native': 'Update vLLM (pip install -U vllm, or Settings → Build current engine source).',
-    'vllm-docker': 'Update the image with: docker pull vllm/vllm-openai:latest',
+    'vllm-native': 'Update vLLM (pip install -U vllm, or Settings → Build current engine source).' + _RUN_WITHOUT,
+    'vllm-docker': 'Update the image with: docker pull vllm/vllm-openai:latest.' + _RUN_WITHOUT,
 }
 
 
@@ -40,7 +42,7 @@ _LLAMA_MTP_SINCE = {
 _LLAMA_CHECKED_THROUGH = 11235
 # Gemma 4 ships its MTP head only as a separate GGUF file.
 _LLAMA_SIDECAR_ONLY = {'gemma4'}
-_LLAMA_UPDATE = 'Update llama.cpp (Settings → Build current engine source, or install a newer release).'
+_LLAMA_UPDATE = 'Update llama.cpp (Settings → Build current engine source, or install a newer release).' + _RUN_WITHOUT
 # Before build 9235 the draft length defaulted to 16; 3 is the tuned default since.
 _LLAMA_DRAFT_MAX = '3'
 
