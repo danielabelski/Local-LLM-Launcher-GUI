@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .engines import llamacpp, vllm_backends, vllm_docker, vllm_native
+from .engines import llamacpp, mtp, vllm_backends, vllm_docker, vllm_native
 from .engines.base import LocalServer
 from . import catalog
 
@@ -88,10 +88,16 @@ class ServerManager:
         # Validate before taking the lock: probing the vLLM runtime can take many
         # seconds, and status polling, logs and stop all need this lock.
         vllm_backends.validate(engine_mode, model, config, hardware, vllm_binary or "vllm")
+        config = dict(config)
+        if config.get("use_mtp"):
+            decision = mtp.resolve(engine_mode, model, config, vllm_binary=vllm_binary or "vllm",
+                                   llama_binary=llamacpp_binary or "llama-server")
+            if decision["level"] == "red":
+                raise ValueError(decision["message"])
+            config["_mtp_args"] = decision["args"]
         with self._lock:
             # Reserve the port before building/spawning: a new process may not
             # listen yet when another launch arrives.
-            config = dict(config)
             default_port = catalog.defaults("llamacpp")["port"] if engine_mode == "llamacpp" \
                 else catalog.defaults("vllm")["port"]
             reserved = {s.port for s in self.servers.values()

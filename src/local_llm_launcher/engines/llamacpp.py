@@ -5,6 +5,7 @@ import os
 from typing import Any, Dict
 
 from ._args import build_args_and_env
+from .mtp import is_head
 from .placement import validate, wrap
 from .. import hardware
 
@@ -16,8 +17,10 @@ def _pick_gguf_path(model: Dict[str, Any], config: Dict[str, Any]) -> str:
         for f in files:
             if f["filename"] == wanted:
                 return f["path"]
+    # A separate MTP head file is never the model itself.
+    models = [f for f in files if not is_head(f["filename"])]
     if files:
-        return files[0]["path"]
+        return (models or files)[0]["path"]
     return model["path"]
 
 
@@ -40,7 +43,7 @@ def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "llama-se
     argv = [binary, "-m", _pick_gguf_path(model, config)]
     if host:
         argv.extend(["--host", host])
-    argv += flags + loading + extra
+    argv += flags + loading + list(config.get("_mtp_args") or ()) + extra
     return {
         "argv": wrap(argv, config),
         "env": env,

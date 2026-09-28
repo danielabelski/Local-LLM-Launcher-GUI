@@ -42,6 +42,7 @@ Local-LLM-Launcher-GUI/
 │   │   ├── _args.py                # Shared: config dict → CLI args using the catalog
 │   │   ├── base.py                 # LocalServer: subprocess lifecycle, logs, health
 │   │   ├── placement.py            # GPU-list, split and NUMA validation; numactl wrapper
+│   │   ├── mtp.py                  # "Use MTP" → engine-specific flags, or an update message
 │   │   ├── vllm_backends.py        # Backend-choice compatibility checks
 │   │   ├── vllm_capabilities.py    # Probes the selected vLLM runtime (flags, b12x)
 │   │   ├── vllm_native.py          # `vllm serve ...` command builder

@@ -478,9 +478,9 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
         rep.flag("extra_args", YELLOW, "Raw flags are appended last and may override these controls. Memory fit cannot be verified.")
     if config.get("numa") or config.get("numactl_interleave"):
         count = (hw.get("numa") or {}).get("node_count")
-        message = ("Only one NUMA node is visible to this process; distribution has no cross-node benefit."
-                   if count == 1 else "NUMA topology is unknown; verify allowed nodes before benchmarking."
-                   if count is None else f"{count} allowed NUMA nodes. Benchmark this policy; effects depend on CPU and memory placement.")
+        message = ("This computer has a single NUMA node (one shared pool of memory), so this setting has nothing to spread across and won't help."
+                   if count == 1 else "Couldn't detect how many NUMA nodes this computer has; check before relying on this setting."
+                   if count is None else f"This computer has {count} NUMA nodes. Whether this helps depends on the model and hardware, so compare speeds with it on and off.")
         rep.flag("numactl_interleave" if config.get("numactl_interleave") else "numa", YELLOW, message)
 
     if rep.blockers:

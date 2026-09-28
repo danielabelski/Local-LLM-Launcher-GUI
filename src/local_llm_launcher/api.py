@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from . import __version__, advisor, catalog, discovery, failures, hardware
 from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
-from .engines import vllm_backends
+from .engines import mtp, vllm_backends
 from .openwebui import OpenWebUIManager
 from .registry import ServerManager
 from .updates import UpdateManager
@@ -210,6 +210,17 @@ def api_advise(body: AdviseRequest):
                                           settings.data.get("vllm_path") or "vllm", wait=False)
         report = advisor.advise(body.engine, model, body.config, hw)
         report["flags"].update(warnings)
+        if body.config.get("use_mtp"):
+            decision = mtp.resolve(mode, model, body.config,
+                                   vllm_binary=settings.data.get("vllm_path") or "vllm",
+                                   llama_binary=hw["engines"].get("llamacpp_path"), wait=False)
+            report["flags"]["use_mtp"] = {"level": decision["level"], "message": decision["message"]}
+            if decision["level"] == "red":
+                # Launch refuses this configuration, so the verdict must too.
+                report["overall"] = {"level": "red", "headline": decision["message"],
+                                     "details": [report["overall"]["headline"], *report["overall"]["details"]]}
+            elif decision["level"] == "yellow":
+                warnings["use_mtp"] = decision
         if warnings:
             if report["overall"]["level"] == "green":
                 report["overall"]["level"] = "yellow"

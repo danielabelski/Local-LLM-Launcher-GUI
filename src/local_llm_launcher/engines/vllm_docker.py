@@ -72,7 +72,8 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         argv.extend(["-e", f"{var}={value}"])
 
     argv.append(IMAGE)
-    argv.extend(["--model", model["repo_id"], "--host", "0.0.0.0"] + flags + extra)
+    argv.extend(["--model", model["repo_id"], "--host", "0.0.0.0"] + flags
+                + list(config.get("_mtp_args") or ()) + extra)
 
     return {
         "argv": argv,

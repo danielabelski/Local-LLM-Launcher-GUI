@@ -287,10 +287,10 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
       </div>
 
       <div className="section" style={{ padding: '14px 20px' }}>
-        <div className="small">NUMA (memory locality across CPU sockets): {hardware?.numa?.node_count ?? 'unknown'} allowed node(s).
-          {' '}numactl {hardware?.numa?.numactl_path ? 'available' : 'not available'}.
-          {hardware?.numa?.node_count === 1 && ' One visible node has no cross-node distribution benefit.'}
-          {' '}Policies are optional; multi-socket machines can benefit, but measure your workload.</div>
+        <div className="small">NUMA nodes (groups of CPU cores with their own memory, found on multi-socket machines): {hardware?.numa?.node_count ?? 'unknown'}.
+          {' '}numactl tool {hardware?.numa?.numactl_path ? 'installed' : 'not installed'}.
+          {hardware?.numa?.node_count === 1 && ' With a single node, the NUMA settings have nothing to spread across and won\'t help.'}
+          {' '}These settings are optional; machines with several nodes can benefit, but compare speeds before keeping one.</div>
         {engineMode === 'llamacpp' && <div className="small" style={{ marginTop: 8 }}>
           llama.cpp devices: {(hardware?.llama_devices ?? []).length
             ? hardware.llama_devices.map((d) => d.name).join(', ')
