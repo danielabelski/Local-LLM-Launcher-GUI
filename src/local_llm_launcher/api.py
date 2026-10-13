@@ -4,13 +4,16 @@ from __future__ import annotations
 import ipaddress
 import threading
 import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import __version__, advisor, catalog, discovery, failures, hardware
+from . import __version__, advisor, benchmarks, catalog, discovery, failures, hardware
 from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
 from .engines import mtp, vllm_backends
@@ -246,6 +249,11 @@ class LaunchRequest(BaseModel):
 def api_launch(body: LaunchRequest):
     model = find_model(body.repo_id)
     config = dict(body.config)
+    if body.engine_mode == "llamacpp" and config.get("gguf_file"):
+        selected = next((f for f in model.get("gguf_files", [])
+                         if f["filename"] == config["gguf_file"]), None)
+        if selected is None or not Path(selected["path"]).is_file():
+            raise HTTPException(400, "The selected GGUF file is no longer installed. Choose an available file in Launch.")
     if body.engine_mode.startswith("vllm") and settings.data.get("hf_token") and not config.get("hf_token"):
         config["hf_token"] = settings.data["hf_token"]
     config["host"] = "0.0.0.0" if settings.data.get("lan_access") else "127.0.0.1"
@@ -262,9 +270,80 @@ def api_launch(body: LaunchRequest):
     return srv.status()
 
 
+class FavoriteRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+@router.get("/favorites")
+def api_favorites():
+    return {"favorites": settings.data["favorites"]}
+
+
+@router.post("/servers/{server_id}/favorites")
+def api_save_favorite(server_id: str, body: FavoriteRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Enter a name for the favorite.")
+    srv = servers.get(server_id)
+    if srv is None:
+        raise HTTPException(404, "No such server.")
+    if srv.config_save_error:
+        raise HTTPException(400, srv.config_save_error)
+    if srv.config is None:
+        raise HTTPException(400, "Launch this model again before saving its settings; older servers have no saved configuration.")
+    favorite = {"id": uuid.uuid4().hex[:12], "name": name, "engine_mode": srv.engine,
+                "repo_id": srv.model_label, "config": dict(srv.config),
+                "created_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        settings.append_record("favorites", favorite)
+    except OSError:
+        raise HTTPException(500, "Could not save the favorite. Check available disk space and settings file permissions.")
+    return favorite
+
+
+@router.post("/favorites/{favorite_id}/launch")
+def api_launch_favorite(favorite_id: str):
+    favorite = next((f for f in settings.data["favorites"] if f["id"] == favorite_id), None)
+    if favorite is None:
+        raise HTTPException(404, "No such favorite.")
+    config, error = catalog.safe_launch_config(favorite["engine_mode"], favorite["config"])
+    if error:
+        raise HTTPException(400, error)
+    return api_launch(LaunchRequest(engine_mode=favorite["engine_mode"],
+                                    repo_id=favorite["repo_id"], config=config))
+
+
 @router.get("/servers")
 def api_servers():
     return {"servers": [_enrich(s) for s in servers.list()]}
+
+
+@router.get("/benchmarks")
+def api_benchmarks():
+    return {"benchmarks": settings.data["benchmarks"]}
+
+
+@router.post("/servers/{server_id}/benchmark")
+def api_benchmark(server_id: str):
+    srv = servers.get(server_id)
+    if srv is None:
+        raise HTTPException(404, "No such server.")
+    try:
+        with srv.log_path.open(encoding="utf-8", errors="replace") as log:
+            metrics = benchmarks.summarize(log, srv.engine)
+    except OSError:
+        raise HTTPException(400, "The server log is not available yet.")
+    if not (metrics["prefill_samples"] or metrics["generation_samples"]):
+        raise HTTPException(400, "No supported timing measurements in this log yet. Run a test chat, then try Benchmark again.")
+    record = {"id": uuid.uuid4().hex[:12], "server_id": server_id,
+              "repo_id": srv.model_label, "engine_mode": srv.engine,
+              "config": srv.config, "config_note": srv.config_save_error,
+              "created_at": datetime.now(timezone.utc).isoformat(), "metrics": metrics}
+    try:
+        settings.append_record("benchmarks", record)
+    except OSError:
+        raise HTTPException(500, "Could not save the benchmark. Check available disk space and settings file permissions.")
+    return record
 
 
 def _enrich(status: Dict[str, Any]) -> Dict[str, Any]:

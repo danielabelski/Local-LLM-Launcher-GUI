@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { StatusBadge } from '../components.jsx'
+import { LaunchSettings, StatusBadge } from '../components.jsx'
 
 function uptime(startedAt) {
   if (!startedAt) return ''
@@ -94,10 +94,47 @@ function ChatTest({ server, notify }) {
   )
 }
 
-function ServerCard({ server, refresh, notify }) {
-  const [openLogs, setOpenLogs] = useState(!server.running)
+function ServerCard({ server, refresh, notify, selected }) {
+  const [openLogs, setOpenLogs] = useState(selected || !server.running)
   const [openChat, setOpenChat] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [naming, setNaming] = useState(false)
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [benchmarking, setBenchmarking] = useState(false)
+  const cardRef = useRef(null)
+
+  useEffect(() => {
+    if (selected) cardRef.current?.scrollIntoView({ block: 'start' })
+  }, [selected])
+
+  const saveFavorite = async (e) => {
+    e.preventDefault()
+    if (!name.trim() || saving) return
+    setSaving(true)
+    try {
+      await api.saveFavorite(server.id, name.trim())
+      notify(`Saved “${name.trim()}” to Favorites.`)
+      setNaming(false)
+      setName('')
+    } catch (err) {
+      notify(err.message, true)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const benchmark = async () => {
+    setBenchmarking(true)
+    try {
+      await api.benchmark(server.id)
+      notify('Results saved. Open Benchmarks to compare recorded performance.')
+    } catch (err) {
+      notify(err.message, true)
+    } finally {
+      setBenchmarking(false)
+    }
+  }
 
   const level = server.running ? (server.healthy ? 'green' : 'amber') : 'red'
   const stateText = server.running
@@ -132,9 +169,9 @@ function ServerCard({ server, refresh, notify }) {
   }
 
   return (
-    <div className="section">
+    <div className="section server-card" ref={cardRef}>
       <div className="section-head">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="server-heading">
           <StatusBadge level={level}>{stateText}</StatusBadge>
           <div>
             <div className="section-title" style={{ border: 'none', padding: 0, margin: 0, textTransform: 'none', letterSpacing: 0, fontSize: 14 }}>
@@ -159,6 +196,8 @@ function ServerCard({ server, refresh, notify }) {
       </div>
 
       <div style={{ padding: '14px 20px' }} className="stack">
+        <LaunchSettings config={server.config} />
+        {server.config_save_error && <p className="small muted">{server.config_save_error}</p>}
         {server.failure_explanation && (
           <div className="why red" style={{ borderLeft: '3px solid var(--nogo)', background: 'var(--nogo-bg)', padding: '8px 10px', borderRadius: 'var(--radius-sm)', fontSize: 12.5 }}>
             <strong>What went wrong:</strong> {server.failure_explanation}
@@ -173,7 +212,7 @@ function ServerCard({ server, refresh, notify }) {
           </div>
         )}
 
-        <div className="row">
+        <div className="row server-controls">
           <button className="btn btn-ghost sm" onClick={() => setOpenLogs(!openLogs)}>
             {openLogs ? 'Hide log' : 'Show log'}
           </button>
@@ -182,7 +221,24 @@ function ServerCard({ server, refresh, notify }) {
               {openChat ? 'Hide test chat' : 'Test chat'}
             </button>
           )}
+          <button className="btn btn-ghost sm" onClick={() => setNaming(!naming)}
+            disabled={server.config == null || !!server.config_save_error} aria-expanded={naming}>
+            Save Launch Settings to Favorites
+          </button>
+          <button className="btn btn-ghost sm" onClick={benchmark} disabled={benchmarking}>
+            {benchmarking ? 'Reading log…' : 'Benchmark'}
+          </button>
         </div>
+
+        {naming && (
+          <form className="row favorite-form" onSubmit={saveFavorite}>
+            <label htmlFor={`favorite-${server.id}`}>Settings name</label>
+            <input id={`favorite-${server.id}`} value={name} onChange={e => setName(e.target.value)}
+              placeholder="Qwen3.8 Unsloth Best" maxLength={120} required autoFocus disabled={saving} />
+            <button className="btn btn-primary sm" disabled={saving || !name.trim()}>{saving ? 'Saving…' : 'Save favorite'}</button>
+            <button type="button" className="btn btn-ghost sm" onClick={() => setNaming(false)} disabled={saving}>Cancel</button>
+          </form>
+        )}
 
         {openLogs && (
           <>
@@ -196,7 +252,7 @@ function ServerCard({ server, refresh, notify }) {
   )
 }
 
-export default function Servers({ servers, refresh, notify }) {
+export default function Servers({ servers, refresh, notify, selectedServer }) {
   return (
     <>
       {servers.length === 0 && (
@@ -206,7 +262,7 @@ export default function Servers({ servers, refresh, notify }) {
         </div>
       )}
       {servers.map((s) => (
-        <ServerCard key={s.id} server={s} refresh={refresh} notify={notify} />
+        <ServerCard key={s.id} server={s} refresh={refresh} notify={notify} selected={s.id === selectedServer} />
       ))}
     </>
   )

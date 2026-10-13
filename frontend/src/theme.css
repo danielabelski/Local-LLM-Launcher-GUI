@@ -523,3 +523,36 @@ table.plain td { padding: 6px 8px; border-bottom: 1px solid var(--border-light);
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Saved launch configurations and log measurements. */
+.server-card { scroll-margin-top: 90px; }
+.sb-btn.sb-submenu { padding-left: 29px; font-size: 12px; }
+.launch-settings { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; min-width: 0; }
+.launch-settings > div { display: flex; flex-wrap: wrap; gap: 5px; padding: 4px 7px; background: var(--bg); border: 1px solid var(--border-light); border-radius: var(--radius-sm); font-size: 11px; max-width: 100%; }
+.launch-settings dt { color: var(--ink-3); }
+.launch-settings dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.server-heading { display: flex; align-items: center; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
+.server-heading > div { min-width: 0; }
+.server-controls, .favorite-form { flex-wrap: wrap; }
+.favorite-form input { flex: 1; min-width: 160px; }
+.favorite-form label { font-size: 12px; }
+.favorite-heading { min-width: 0; overflow-wrap: anywhere; }
+.favorite-heading h2 { font-size: 15px; margin: 0 0 4px; }
+.saved-settings { padding: 14px 20px; }
+.benchmark-scroll { overflow-x: auto; }
+.benchmark-table { min-width: 1000px; }
+.benchmark-table td { vertical-align: top; }
+.benchmark-model { min-width: 240px; max-width: 360px; overflow-wrap: anywhere; }
+.benchmark-model details { margin-top: 8px; }
+.benchmark-model summary { cursor: pointer; font-size: 12px; margin-bottom: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 600px) {
+  .server-card { scroll-margin-top: 140px; }
+  .sidebar { flex-wrap: wrap; }
+  .sidebar .sb-nav { width: 100%; }
+  .sidebar .sb-btn { width: auto; }
+  .topbar { flex-wrap: wrap; gap: 12px; }
+  .topbar-right { flex-wrap: wrap; }
+  .server-card .section-head { align-items: flex-start; }
+  .server-heading { flex-wrap: wrap; }
+}

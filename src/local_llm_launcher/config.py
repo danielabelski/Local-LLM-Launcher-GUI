@@ -2,6 +2,7 @@
 it may hold a Hugging Face token)."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -15,6 +16,8 @@ DEFAULTS: Dict[str, Any] = {
     "llamacpp_path": None,
     "vllm_path": None,
     "lan_access": False,
+    "favorites": [],
+    "benchmarks": [],
 }
 
 
@@ -25,7 +28,7 @@ class Settings:
         self.path = self.app_dir / "settings.json"
         self._lock = threading.RLock()
         self.app_dir.mkdir(parents=True, exist_ok=True)
-        self.data: Dict[str, Any] = dict(DEFAULTS)
+        self.data: Dict[str, Any] = copy.deepcopy(DEFAULTS)
         self._load()
 
     def _load(self) -> None:
@@ -58,6 +61,13 @@ class Settings:
             except Exception:
                 self.data = previous
                 raise
+
+    def append_record(self, key: str, record: Dict[str, Any]) -> None:
+        """Append and persist without losing simultaneous saves or failed writes."""
+        if key not in ("favorites", "benchmarks"):
+            raise ValueError("Unknown record collection.")
+        with self._lock:
+            self.update({key: [*self.data[key], record]})
 
     def public(self) -> Dict[str, Any]:
         """Settings safe to send to the browser — token masked."""

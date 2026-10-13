@@ -1,5 +1,16 @@
 import { useEffect } from 'react'
 
+export function LaunchSettings({ config }) {
+  if (config == null) return <p className="small muted">Launch settings unavailable for this older server.</p>
+  return (
+    <dl className="launch-settings" aria-label="Launch settings">
+      {Object.entries(config).map(([key, value]) => (
+        <div key={key}><dt>{key.replaceAll('_', ' ')}</dt><dd>{String(value)}</dd></div>
+      ))}
+    </dl>
+  )
+}
+
 export function StatusBadge({ level = 'neutral', children }) {
   return (
     <span className={`badge ${level}`}>
