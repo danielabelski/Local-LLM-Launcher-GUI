@@ -3,6 +3,19 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
+## 2026-10-16 — v0.5.5
+
+- Added main-section `llama.cpp` and `vLLM` launch controls:
+  - **Essential**: `--temp` (`LLAMA_ARG_TEMPERATURE`) and `--system-prompt`.
+  - **Connection**: `--host` (`LLAMA_ARG_HOST`) on both `llama.cpp` and `vLLM`, overriding the Settings LAN toggle when set.
+  - **Performance & memory**: moved `-ncmoe` / `--n-cpu-moe N` (`LLAMA_ARG_N_CPU_MOE`) out of Advanced into the main performance section.
+- Added `llama.cpp` **Advanced** launch controls:
+  - Offload & loading: `--moe-cache-mib N` (`LLAMA_ARG_MOE_CACHE_MIB`), `--n-cpu-ffn N` (`LLAMA_ARG_N_CPU_FFN`), and `--lazy-mode MODE` (`auto`, `on`, `off`; `LLAMA_ARG_LAZY_MODE`).
+  - Context, server & prompt options: `--context-shift` / `--no-context-shift` (`--ctx-shift`, `LLAMA_ARG_CONTEXT_SHIFT`), `--slots` / `--no-slots` (`LLAMA_ARG_ENDPOINT_SLOTS`), `--color [on|off|auto]`, and `--system-prompt-file FNAME`.
+  - Reasoning / thinking controls: `--reasoning [on|off|auto]` (`LLAMA_ARG_REASONING`), `--reasoning-format FORMAT` (`auto`, `deepseek`, `deepseek-legacy`, `none`; `LLAMA_ARG_THINK`), `--reasoning-effort LEVEL` (`default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `LLAMA_ARG_REASONING_EFFORT`), and `--reasoning-budget N` (`LLAMA_ARG_THINK_BUDGET`).
+  - Top 5 speculative decoding (`--spec-draft-*`) controls: `--spec-draft-model`, `--spec-draft-ngl`, `--spec-draft-n-max`, `--spec-draft-n-min`, and `--spec-draft-p-min`.
+- Added placement validation and traffic-light advisor checks for the new flags (blocking `lazy_mode="on"` when combined with `--no-mmap`, warning when `--moe-cache-mib` is set without CPU MoE offload, and marking custom memory fit for `--n-cpu-ffn` and `--spec-draft-model`).
+
 ## 2026-10-06 — v0.5.1
 
 - New llama.cpp setting "MTP words drafted ahead" (1–16), shown when MTP is
