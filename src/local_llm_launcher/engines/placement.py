@@ -31,6 +31,9 @@ def parse_device_ids(raw):
 
 
 def validate(engine, config, numa=None):
+    host = config.get('host')
+    if host is not None and (not isinstance(host, str) or any(ch.isspace() for ch in host.strip())):
+        raise ValueError('Enter a valid listen address without spaces, such as 127.0.0.1 or 0.0.0.0.')
     if config.get('numactl_interleave'):
         if engine == 'vllm-docker':
             raise ValueError('Memory interleaving supports native engines only; turn it off for Docker.')
@@ -61,16 +64,35 @@ def validate(engine, config, numa=None):
             raise ValueError('GPU proportions require a multi-GPU split style and GPU devices.')
         if devices and len(values) != len(devices):
             raise ValueError('Provide one GPU split proportion per selected device.')
-    for key in ('main_gpu', 'n_cpu_moe', 'ubatch_size'):
+    for key in ('main_gpu', 'n_cpu_moe', 'moe_cache_mib', 'n_cpu_ffn', 'spec_draft_ngl', 'spec_draft_n_max', 'spec_draft_n_min', 'ubatch_size'):
         value = config.get(key)
-        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < (1 if key == 'ubatch_size' else 0)):
-            raise ValueError(f'{key} must be a whole number at least {1 if key == "ubatch_size" else 0}.')
+        min_val = 1 if key in ('ubatch_size', 'spec_draft_n_max') else 0
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < min_val):
+            raise ValueError(f'{key} must be a whole number at least {min_val}.')
+    budget = config.get('reasoning_budget')
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < -1):
+        raise ValueError('reasoning_budget must be a whole number at least -1.')
+    if config.get('spec_draft_n_min') is not None and config.get('spec_draft_n_max') is not None:
+        if config['spec_draft_n_min'] > config['spec_draft_n_max']:
+            raise ValueError('Minimum speculative draft tokens cannot exceed maximum speculative draft tokens.')
+    if config.get('system_prompt') and config.get('system_prompt_file'):
+        raise ValueError('Choose either an inline system prompt or a system prompt file, not both.')
     if devices and config.get('main_gpu') is not None and config['main_gpu'] >= len(devices):
         raise ValueError('Main GPU index must refer to a selected device (numbered from zero).')
     if config.get('cpu_moe') and config.get('n_cpu_moe', 0):
         raise ValueError('Choose all CPU experts or a CPU expert layer count, not both.')
     if config.get('numa') not in (None, 'distribute', 'isolate', 'numactl'):
         raise ValueError('NUMA mode must be distribute, isolate, numactl, or unset.')
+    if config.get('lazy_mode') not in (None, 'auto', 'on', 'off'):
+        raise ValueError('Lazy mode must be auto, on, off, or unset.')
+    if config.get('color') not in (None, 'auto', 'on', 'off'):
+        raise ValueError('Console color mode must be auto, on, off, or unset.')
+    if config.get('reasoning') not in (None, 'auto', 'on', 'off'):
+        raise ValueError('Reasoning mode must be auto, on, off, or unset.')
+    if config.get('reasoning_format') not in (None, 'auto', 'deepseek', 'deepseek-legacy', 'none'):
+        raise ValueError('Reasoning format must be auto, deepseek, deepseek-legacy, none, or unset.')
+    if config.get('reasoning_effort') not in (None, 'default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+        raise ValueError('Reasoning effort must be default, minimal, low, medium, high, xhigh, max, or unset.')
     if mode == 'tensor':
         if config.get('flash_attn') == 'off':
             raise ValueError('Tensor splitting requires flash attention on or auto.')

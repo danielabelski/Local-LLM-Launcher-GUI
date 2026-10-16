@@ -212,6 +212,15 @@
       "help": "If set, apps must send this key, like a password, to use the server. Recommended when other devices can reach this computer, for example with local network access turned on in Settings."
     },
     {
+      "key": "host",
+      "flag": "--host",
+      "label": "Listen address (host)",
+      "type": "string",
+      "default": null,
+      "category": "api",
+      "help": "The IP address or hostname the server binds to (e.g. '127.0.0.1' for this computer only, or '0.0.0.0' for your local network). Leave empty to follow the local network access setting in Settings."
+    },
+    {
       "key": "device_ids",
       "flag": null,
       "label": "Which GPUs to use",

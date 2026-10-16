@@ -809,3 +809,26 @@ def test_llamacpp_unset_parallel_means_llama_servers_own_four_slots(tmp_path):
     one = advisor.advise("llamacpp", _gguf_file_model(path, 15.75), {**cfg, "parallel": 1}, DUAL_5060TI)["budget"]
     assert unset["recurrent_state_gb"] == 0.6
     assert one["recurrent_state_gb"] == 0.1
+
+
+def test_llamacpp_lazy_mode_on_with_no_mmap_is_red():
+    a = advisor.advise("llamacpp", gguf_model(), {"lazy_mode": "on", "no_mmap": True}, DUAL_5060TI)
+    assert a["flags"]["lazy_mode"]["level"] == "red"
+    assert a["overall"]["level"] == "red"
+
+
+def test_llamacpp_moe_cache_mib_without_cpu_moe_warns_yellow():
+    a = advisor.advise("llamacpp", gguf_model(), {"moe_cache_mib": 1024}, DUAL_5060TI)
+    assert a["flags"]["moe_cache_mib"]["level"] == "yellow"
+    a_with_cpu_moe = advisor.advise("llamacpp", gguf_model(), {"moe_cache_mib": 1024, "n_cpu_moe": 4}, DUAL_5060TI)
+    assert "moe_cache_mib" not in a_with_cpu_moe["flags"]
+
+
+def test_llamacpp_n_cpu_ffn_and_spec_draft_model_mark_custom_fit():
+    a_ffn = advisor.advise("llamacpp", gguf_model(), {"n_cpu_ffn": 4}, DUAL_5060TI)
+    assert a_ffn["flags"]["n_cpu_ffn"]["level"] == "yellow"
+    assert a_ffn["budget"]["fit_unknown"] is True
+
+    a_draft = advisor.advise("llamacpp", gguf_model(), {"spec_draft_model": "/models/draft.gguf"}, DUAL_5060TI)
+    assert a_draft["flags"]["spec_draft_model"]["level"] == "yellow"
+    assert a_draft["budget"]["fit_unknown"] is True

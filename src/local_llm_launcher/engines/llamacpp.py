@@ -30,15 +30,20 @@ def pick_gguf_path(model: Dict[str, Any], config: Dict[str, Any]) -> str:
 
 
 def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "llama-server") -> Dict[str, Any]:
+    if "context_shift" in config and "ctx_shift" not in config:
+        config = {**config, "ctx_shift": config["context_shift"]}
     validate('llamacpp', config)
-    cfg = {k: v for k, v in config.items() if k != "gguf_file"}
+    if config.get("cuda_allreduce") not in (None, "nccl", "internal"):
+        raise ValueError("CUDA AllReduce must be automatic, nccl, or internal")
+    cfg = {k: v for k, v in config.items() if k not in ("gguf_file", "host", "context_shift")}
     loading = []
     if (cfg.get("no_mmap") or cfg.get("mlock")) and hardware.llama_capabilities(binary)["load_mode"]:
         no_mmap, mlock = cfg.pop("no_mmap", False), cfg.pop("mlock", False)
         loading = ["--load-mode", "mlock" if no_mmap and mlock else "none" if no_mmap else "mmap+mlock"]
     flags, env, extra = build_args_and_env("llamacpp", cfg)
     port = int(config.get("port", 8080))
-    host = config.get("host", "127.0.0.1")
+    raw_host = config.get("host")
+    host = "127.0.0.1" if raw_host is None else str(raw_host).strip()
     # Prebuilt llama.cpp releases ship their shared libraries next to the binary;
     # without LD_LIBRARY_PATH pointing there, the server can't start.
     if os.sep in binary:

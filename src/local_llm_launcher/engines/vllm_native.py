@@ -13,13 +13,15 @@ from .placement import normalize_device_ids, validate, wrap
 
 def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "vllm") -> Dict[str, Any]:
     validate("vllm-native", config)
-    config = {**config, "device_ids": normalize_device_ids(config.get("device_ids"))}
-    flags, env, extra = build_args_and_env("vllm", config)
+    cfg = {k: v for k, v in config.items() if k != "host"}
+    cfg["device_ids"] = normalize_device_ids(config.get("device_ids"))
+    flags, env, extra = build_args_and_env("vllm", cfg)
     # GPU numbers everywhere in the launcher (device_ids, an inherited
     # CUDA_VISIBLE_DEVICES, advice) are nvidia-smi's; CUDA defaults to fastest-first.
     env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     port = int(config.get("port", 8000))
-    host = config.get("host", "127.0.0.1")
+    raw_host = config.get("host")
+    host = "127.0.0.1" if raw_host is None else str(raw_host).strip()
     argv = ([binary, "serve", model["repo_id"]]
             + (["--host", host] if host else [])
             + flags + list(config.get("_mtp_args") or ()) + extra)

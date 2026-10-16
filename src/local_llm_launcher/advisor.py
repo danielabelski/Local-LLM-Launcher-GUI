@@ -607,6 +607,20 @@ def _advise_llamacpp(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, A
                  "Locking the model in RAM needs the whole file to fit in memory with room to spare — "
                  "this model is too big for that on this machine.")
 
+    if cfg.get("lazy_mode") == "on" and cfg.get("no_mmap"):
+        rep.flag("lazy_mode", RED,
+                 "Lazy loading ('on') requires memory mapping (mmap). Turn off 'Copy full model into RAM (no mmap)' "
+                 "or set lazy mode to 'auto' or 'off'.")
+        rep.blockers.append(
+            "Lazy loading ('on') cannot be combined with 'Copy full model into RAM (no mmap)' "
+            "because lazy loading relies on memory-mapped files."
+        )
+
+    if (cfg.get("moe_cache_mib") or 0) > 0 and not (cfg.get("cpu_moe") or (cfg.get("n_cpu_moe") or 0) > 0):
+        rep.flag("moe_cache_mib", YELLOW,
+                 "The MoE GPU cache only applies when MoE experts live on the CPU. Set 'MoE expert layers on CPU' "
+                 "(--n-cpu-moe) or 'Keep all MoE experts on CPU' (--cpu-moe) to use it.")
+
     if ctx > 131072:
         rep.flag("ctx_size", YELLOW,
                  "Very few models support context this long, and conversation memory grows with it. "
@@ -670,10 +684,15 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
     custom = bool(config.get("extra_args")) or (engine == "llamacpp" and (
         any(config.get(k) is not None for k in ("device", "tensor_split", "main_gpu"))
         or config.get("split_mode") in ("none", "row", "tensor")
-        or config.get("cpu_moe") or (config.get("n_cpu_moe") or 0) > 0))
+        or config.get("cpu_moe") or (config.get("n_cpu_moe") or 0) > 0
+        or (config.get("n_cpu_ffn") or 0) > 0 or bool(config.get("spec_draft_model"))))
     if engine == "llamacpp":
         if config.get("cpu_moe") or config.get("n_cpu_moe", 0):
             rep.flag("n_cpu_moe", YELLOW, "CPU expert offload saves GPU memory but uses RAM and may reduce speed. Exact expert sizes are unknown; lower N leaves more experts on the GPU.")
+        if (config.get("n_cpu_ffn") or 0) > 0:
+            rep.flag("n_cpu_ffn", YELLOW, "CPU FFN offload saves GPU memory on supported models (such as Qwen3.5) by keeping feed-forward layers in RAM, at the cost of generation speed.")
+        if config.get("spec_draft_model"):
+            rep.flag("spec_draft_model", YELLOW, "A speculative draft model uses additional memory that isn't included in the main model's size estimate.")
         if config.get("split_mode") == "tensor":
             message = (
                 "Experimental tensor splitting disables automatic fitting and does not support "

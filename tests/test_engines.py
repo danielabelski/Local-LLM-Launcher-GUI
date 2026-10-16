@@ -251,3 +251,134 @@ def test_failure_translation_quant_mismatch():
 
 def test_failure_translation_unknown_returns_none():
     assert failures.translate(["all good here"]) is None
+
+
+def test_catalog_new_flags_and_advanced_placement():
+    from local_llm_launcher import catalog
+
+    llama_flags = {f["key"]: f for f in catalog.load_catalog("llamacpp")["flags"]}
+    vllm_flags = {f["key"]: f for f in catalog.load_catalog("vllm")["flags"]}
+
+    # Non-advanced exceptions requested by user: temp, system_prompt, host, n_cpu_moe
+    for key, expected_cat in (
+        ("temp", "essential"),
+        ("system_prompt", "essential"),
+        ("host", "api"),
+        ("n_cpu_moe", "performance"),
+    ):
+        assert key in llama_flags
+        assert llama_flags[key]["category"] == expected_cat
+        assert not llama_flags[key].get("advanced", False), f"{key} should not be in advanced"
+
+    assert "host" in vllm_flags
+    assert vllm_flags["host"]["category"] == "api"
+    assert not vllm_flags["host"].get("advanced", False)
+
+    # Advanced flags
+    for key in (
+        "ctx_shift",
+        "slots",
+        "lazy_mode",
+        "moe_cache_mib",
+        "n_cpu_ffn",
+        "color",
+        "system_prompt_file",
+        "reasoning",
+        "reasoning_format",
+        "reasoning_effort",
+        "reasoning_budget",
+        "spec_draft_model",
+        "spec_draft_ngl",
+        "spec_draft_n_max",
+        "spec_draft_n_min",
+        "spec_draft_p_min",
+    ):
+        assert key in llama_flags, f"Missing {key} in llamacpp catalog"
+        assert llama_flags[key].get("advanced") is True, f"{key} should be advanced"
+
+
+def test_llamacpp_new_flags_emission():
+    spec = llamacpp.build(
+        GGUF,
+        {
+            "port": 8080,
+            "host": "192.168.1.50",
+            "temp": 0.6,
+            "system_prompt": "You are concise.",
+            "n_cpu_moe": 8,
+            "moe_cache_mib": 2048,
+            "n_cpu_ffn": 4,
+            "lazy_mode": "on",
+            "ctx_shift": True,
+            "slots": False,
+            "color": "on",
+            "reasoning": "on",
+            "reasoning_format": "deepseek",
+            "reasoning_effort": "high",
+            "reasoning_budget": 1024,
+            "spec_draft_model": "/models/draft.gguf",
+            "spec_draft_ngl": 99,
+            "spec_draft_n_max": 16,
+            "spec_draft_n_min": 2,
+            "spec_draft_p_min": 0.75,
+        },
+        binary="llama-server",
+    )
+    argv = spec["argv"]
+    assert argv.count("--host") == 1
+    assert argv[argv.index("--host") + 1] == "192.168.1.50"
+    assert argv[argv.index("--temp") + 1] == "0.6"
+    assert argv[argv.index("--system-prompt") + 1] == "You are concise."
+    assert argv[argv.index("--n-cpu-moe") + 1] == "8"
+    assert argv[argv.index("--moe-cache-mib") + 1] == "2048"
+    assert argv[argv.index("--n-cpu-ffn") + 1] == "4"
+    assert argv[argv.index("--lazy-mode") + 1] == "on"
+    assert "--context-shift" in argv
+    assert "--no-slots" in argv and "--slots" not in argv
+    assert argv[argv.index("--color") + 1] == "on"
+    assert argv[argv.index("--reasoning") + 1] == "on"
+    assert argv[argv.index("--reasoning-format") + 1] == "deepseek"
+    assert argv[argv.index("--reasoning-effort") + 1] == "high"
+    assert argv[argv.index("--reasoning-budget") + 1] == "1024"
+    assert argv[argv.index("--spec-draft-model") + 1] == "/models/draft.gguf"
+    assert argv[argv.index("--spec-draft-ngl") + 1] == "99"
+    assert argv[argv.index("--spec-draft-n-max") + 1] == "16"
+    assert argv[argv.index("--spec-draft-n-min") + 1] == "2"
+    assert argv[argv.index("--spec-draft-p-min") + 1] == "0.75"
+
+
+def test_llamacpp_negative_ctx_shift_and_alias():
+    argv_false = llamacpp.build(GGUF, {"ctx_shift": False}, binary="llama-server")["argv"]
+    assert "--no-context-shift" in argv_false
+    argv_alias = llamacpp.build(GGUF, {"context_shift": True}, binary="llama-server")["argv"]
+    assert "--context-shift" in argv_alias
+
+
+def test_host_emitted_once_across_all_builders():
+    v_native = vllm_native.build(MODEL, {"host": "10.0.0.5", "port": 8000})["argv"]
+    assert v_native.count("--host") == 1
+    assert v_native[v_native.index("--host") + 1] == "10.0.0.5"
+
+    v_docker = vllm_docker.build(MODEL, {"host": "10.0.0.5", "port": 8000})["argv"]
+    assert v_docker[v_docker.index("-p") + 1] == "10.0.0.5:8000:8000"
+    assert v_docker.count("--host") == 1
+    assert v_docker[v_docker.index("--host") + 1] == "0.0.0.0"
+
+
+def test_placement_validation_for_new_flags():
+    with pytest.raises(ValueError, match="listen address"):
+        llamacpp.build(GGUF, {"host": "127.0.0.1 8080"})
+    with pytest.raises(ValueError, match="system prompt"):
+        llamacpp.build(GGUF, {"system_prompt": "hi", "system_prompt_file": "/tmp/p.txt"})
+    with pytest.raises(ValueError, match="speculative draft"):
+        llamacpp.build(GGUF, {"spec_draft_n_min": 10, "spec_draft_n_max": 5})
+    with pytest.raises(ValueError, match="reasoning_budget"):
+        llamacpp.build(GGUF, {"reasoning_budget": -2})
+    # -1 and 0 are valid for reasoning_budget
+    assert "--reasoning-budget" in llamacpp.build(GGUF, {"reasoning_budget": -1})["argv"]
+    assert "--reasoning-budget" in llamacpp.build(GGUF, {"reasoning_budget": 0})["argv"]
+    with pytest.raises(ValueError, match="Lazy mode"):
+        llamacpp.build(GGUF, {"lazy_mode": "invalid"})
+    with pytest.raises(ValueError, match="Reasoning effort"):
+        llamacpp.build(GGUF, {"reasoning_effort": "ultra"})
+

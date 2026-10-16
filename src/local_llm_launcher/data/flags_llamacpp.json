@@ -173,6 +173,22 @@
       "help": "How the model is divided when you have more than one GPU. Layer (default) gives each GPU whole layers plus their share of conversation memory, and is the most reliable choice. Row splits each layer across the cards; it is deprecated and keeps conversation memory on the main GPU. None uses only the main GPU. Tensor is experimental: it splits individual tensors across the cards, turns off automatic fitting, and doesn't support several MoE and hybrid model types. Compressed K/V cache works with tensor splitting on recent llama.cpp builds (upstream PR #23792). Older builds may need an engine update, layer splitting, or f16 cache. Model weight quantization, such as NVFP4, is separate from conversation cache precision."
     },
     {
+      "key": "cuda_allreduce",
+      "flag": null,
+      "env_var": "GGML_CUDA_ALLREDUCE",
+      "label": "NCCL multi-GPU communication",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        null,
+        "nccl",
+        "internal"
+      ],
+      "category": "advanced",
+      "advanced": true,
+      "help": "Automatic keeps the engine default. nccl turns NCCL on; internal turns it off and uses llama.cpp\u2019s built-in AllReduce. Applies to CUDA tensor splitting. NCCL requires an engine built with NCCL support; enabling it here cannot add missing support. Switching takes effect on the next model launch, without rebuilding. Compare speed on your hardware: NCCL is not always faster."
+    },
+    {
       "key": "no_kv_offload",
       "flag": "--no-kv-offload",
       "label": "KV cache to system RAM (HEAVY SPEED PENALTY)",
@@ -199,6 +215,38 @@
       "default": true,
       "category": "essential",
       "help": "Formats conversations exactly the way the model was trained to expect, using the chat template stored in the model file. Leave it on; turning it off often causes odd or broken replies."
+    },
+    {
+      "key": "temp",
+      "flag": "--temp",
+      "env_var": "LLAMA_ARG_TEMPERATURE",
+      "label": "Sampling temperature",
+      "type": "float",
+      "default": 0.8,
+      "min": 0.0,
+      "max": 2.0,
+      "step": 0.05,
+      "category": "essential",
+      "help": "Controls how creative or predictable the model's replies are (default: 0.80). Lower values (such as 0.1\u20130.3) keep answers focused and repeatable, which works well for code and facts; 0.0 always picks the single most likely word. Higher values (0.7\u20131.2) add variety for brainstorming or creative writing; going much past 1.5 often produces rambling or garbled text."
+    },
+    {
+      "key": "system_prompt",
+      "flag": "--system-prompt",
+      "label": "System prompt",
+      "type": "string",
+      "default": null,
+      "category": "essential",
+      "help": "Default instructions that set the model's role, tone, or rules before the conversation starts (for example, 'You are a concise Python assistant'). Applied when the model's chat template supports a system prompt. Don't combine with System prompt file."
+    },
+    {
+      "key": "host",
+      "flag": "--host",
+      "env_var": "LLAMA_ARG_HOST",
+      "label": "Listen address (host)",
+      "type": "string",
+      "default": null,
+      "category": "api",
+      "help": "The network address the server listens on. Leave empty to follow the Settings tab (127.0.0.1 for this computer only, or 0.0.0.0 when local network access is turned on). Set a specific IP address (such as a Tailscale or LAN IP) to listen only on that interface."
     },
     {
       "key": "alias",
@@ -262,13 +310,231 @@
     {
       "key": "n_cpu_moe",
       "flag": "--n-cpu-moe",
+      "env_var": "LLAMA_ARG_N_CPU_MOE",
       "label": "CPU expert layer count",
       "type": "int",
       "default": null,
+      "category": "performance",
+      "help": "A middle ground to CPU MoE (-ncmoe / --n-cpu-moe): keeps only the expert weights of the first N layers in system RAM. Raise N until the model fits. Each step down puts more experts back on the GPU and speeds up generation. How much memory each layer saves depends on the model.",
+      "min": 0
+    },
+    {
+      "key": "moe_cache_mib",
+      "flag": "--moe-cache-mib",
+      "env_var": "LLAMA_ARG_MOE_CACHE_MIB",
+      "label": "GPU cache for CPU MoE experts (MiB)",
+      "type": "int",
+      "default": null,
+      "min": 0,
       "category": "advanced",
       "advanced": true,
-      "help": "A middle ground to CPU MoE: keeps only the expert weights of the first N layers in system RAM. Raise N until the model fits. Each step down puts more experts back on the GPU and speeds up generation. How much memory each layer saves depends on the model.",
-      "min": 0
+      "help": "Reserves a GPU memory cache (in MiB) for frequently used MoE experts that live in system RAM (--n-cpu-moe or --cpu-moe). Keeping hot experts cached on the GPU speeds up generation without needing enough VRAM for all experts. With multiple GPUs, the cache is divided between them like layers (--tensor-split). Leave empty or 0 to disable."
+    },
+    {
+      "key": "n_cpu_ffn",
+      "flag": "--n-cpu-ffn",
+      "env_var": "LLAMA_ARG_N_CPU_FFN",
+      "label": "CPU dense FFN layer count",
+      "type": "int",
+      "default": null,
+      "min": 0,
+      "category": "advanced",
+      "advanced": true,
+      "help": "For dense (non-MoE) models: keeps the feed-forward network (FFN) weights of the first N layers in system RAM while keeping attention on the GPU (-ncffn / --n-cpu-ffn). Useful when a dense model almost fits in GPU memory and you want to spill only the heavy FFN matrices of a few layers instead of full layers."
+    },
+    {
+      "key": "lazy_mode",
+      "flag": "--lazy-mode",
+      "env_var": "LLAMA_ARG_LAZY_MODE",
+      "label": "Lazy tensor loading",
+      "type": "choice",
+      "default": "auto",
+      "choices": [
+        "auto",
+        "on",
+        "off"
+      ],
+      "category": "advanced",
+      "advanced": true,
+      "help": "Controls on-demand ('lazy') reading of large lookup tensors, such as per-layer embeddings, directly from disk instead of keeping them in RAM at all times (-lzm / --lazy-mode). 'auto' enables it for tensors larger than 4 GiB; 'on' reads them on demand from disk (requires mmap, so do not combine with --no-mmap); 'off' always keeps them resident in memory."
+    },
+    {
+      "key": "ctx_shift",
+      "flag": "--context-shift",
+      "negative_flag": "--no-context-shift",
+      "env_var": "LLAMA_ARG_CONTEXT_SHIFT",
+      "label": "Context shift (--ctx-shift)",
+      "type": "bool",
+      "default": false,
+      "category": "advanced",
+      "advanced": true,
+      "help": "When a conversation reaches the maximum context window (--ctx-size), automatically drops older tokens from conversation memory to make room for new ones instead of stopping with an error (--context-shift / --ctx-shift). Note: incompatible with models that rely on Sliding Window Attention (SWA) or certain recurrent/hybrid architectures."
+    },
+    {
+      "key": "slots",
+      "flag": "--slots",
+      "negative_flag": "--no-slots",
+      "env_var": "LLAMA_ARG_ENDPOINT_SLOTS",
+      "label": "Expose slots monitoring endpoint",
+      "type": "bool",
+      "default": true,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Exposes the /slots HTTP endpoint on llama-server (enabled by default) so tools can inspect active request slots, token generation speed, and cache state. Turn it off (--no-slots) to hide that endpoint when sharing the server on an untrusted network."
+    },
+    {
+      "key": "color",
+      "flag": "--color",
+      "label": "Colorized console output",
+      "type": "choice",
+      "default": "auto",
+      "choices": [
+        "auto",
+        "on",
+        "off"
+      ],
+      "category": "advanced",
+      "advanced": true,
+      "help": "Controls ANSI color codes in console output (-co / --color): 'on' forces colors, 'off' disables them, and 'auto' enables colors only when writing directly to a terminal."
+    },
+    {
+      "key": "system_prompt_file",
+      "flag": "--system-prompt-file",
+      "label": "System prompt file",
+      "type": "string",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Path to a text file containing the default system prompt (-sysf / --system-prompt-file). Useful for long or reusable instructions without pasting them into the command line. Don't combine with System prompt."
+    },
+    {
+      "key": "reasoning",
+      "flag": "--reasoning",
+      "env_var": "LLAMA_ARG_REASONING",
+      "label": "Reasoning / thinking mode",
+      "type": "choice",
+      "default": "auto",
+      "choices": [
+        "auto",
+        "on",
+        "off"
+      ],
+      "category": "advanced",
+      "advanced": true,
+      "help": "Controls whether reasoning/thinking is enabled in the chat template (-rea / --reasoning, env: LLAMA_ARG_REASONING). 'auto' detects support from the model's template, 'on' enables thinking trace generation, and 'off' suppresses thinking so the model replies directly."
+    },
+    {
+      "key": "reasoning_format",
+      "flag": "--reasoning-format",
+      "env_var": "LLAMA_ARG_THINK",
+      "label": "Reasoning output format",
+      "type": "choice",
+      "default": "auto",
+      "choices": [
+        "auto",
+        "deepseek",
+        "deepseek-legacy",
+        "none"
+      ],
+      "category": "advanced",
+      "advanced": true,
+      "help": "Controls how <think>...</think> reasoning blocks are extracted and returned by the API (env: LLAMA_ARG_THINK). 'auto' and 'deepseek' move thoughts into message.reasoning_content; 'deepseek-legacy' keeps <think> tags in message.content while also filling message.reasoning_content; 'none' leaves thoughts unparsed inside message.content."
+    },
+    {
+      "key": "reasoning_effort",
+      "flag": "--reasoning-effort",
+      "env_var": "LLAMA_ARG_REASONING_EFFORT",
+      "label": "Reasoning effort level",
+      "type": "choice",
+      "default": "default",
+      "choices": [
+        "default",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "category": "advanced",
+      "advanced": true,
+      "help": "Reasoning effort level passed to the model's chat template (env: LLAMA_ARG_REASONING_EFFORT). Keep 'default' to use the template's own setting, or choose 'minimal', 'low', 'medium', 'high', 'xhigh', or 'max' on templates that support adjustable thinking depth."
+    },
+    {
+      "key": "reasoning_budget",
+      "flag": "--reasoning-budget",
+      "env_var": "LLAMA_ARG_THINK_BUDGET",
+      "label": "Reasoning token budget",
+      "type": "int",
+      "default": null,
+      "min": -1,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Maximum number of tokens the model may spend thinking before it is forced to close its reasoning block and write the final answer (env: LLAMA_ARG_THINK_BUDGET). Use -1 (the default) for unrestricted thinking, 0 to end thinking immediately, or a positive number such as 1024 to cap long reasoning chains."
+    },
+    {
+      "key": "spec_draft_model",
+      "flag": "--spec-draft-model",
+      "env_var": "LLAMA_ARG_SPEC_DRAFT_MODEL",
+      "label": "Speculative draft model path",
+      "type": "string",
+      "default": null,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Path to a smaller, faster GGUF draft model from the same family (-md / --model-draft) used for speculative decoding. The draft model guesses tokens ahead and the main model verifies them in parallel, speeding up generation without changing output quality."
+    },
+    {
+      "key": "spec_draft_ngl",
+      "flag": "--spec-draft-ngl",
+      "env_var": "LLAMA_ARG_N_GPU_LAYERS_DRAFT",
+      "label": "Draft model GPU layers",
+      "type": "int",
+      "default": null,
+      "min": 0,
+      "max": 999,
+      "category": "advanced",
+      "advanced": true,
+      "help": "How many layers of the speculative draft model are stored in GPU memory (-ngld / --n-gpu-layers-draft). Leave empty for automatic, set 999 to keep the entire draft model on the GPU for maximum speed, or set 0 to run the draft model on the CPU."
+    },
+    {
+      "key": "spec_draft_n_max",
+      "flag": "--spec-draft-n-max",
+      "env_var": "LLAMA_ARG_SPEC_DRAFT_N_MAX",
+      "label": "Max speculative draft tokens",
+      "type": "int",
+      "default": null,
+      "min": 0,
+      "max": 64,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Maximum number of tokens the draft model (or MTP head) proposes ahead in a single speculative step (default: 3). Values between 2 and 6 usually work best; setting it too high wastes work when later guesses are rejected."
+    },
+    {
+      "key": "spec_draft_n_min",
+      "flag": "--spec-draft-n-min",
+      "env_var": "LLAMA_ARG_SPEC_DRAFT_N_MIN",
+      "label": "Min speculative draft tokens",
+      "type": "int",
+      "default": null,
+      "min": 0,
+      "max": 64,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Minimum number of tokens the draft model must propose before speculative verification runs (default: 0). Raising it avoids speculative overhead when the draft model's confidence drops after only one token."
+    },
+    {
+      "key": "spec_draft_p_min",
+      "flag": "--spec-draft-p-min",
+      "env_var": "LLAMA_ARG_SPEC_DRAFT_P_MIN",
+      "label": "Min speculative draft probability",
+      "type": "float",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.05,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Minimum confidence probability (0.00\u20131.00, default: 0.00) required for the draft model to keep proposing tokens in a greedy speculative step (--draft-p-min). Raising it (for example to 0.50\u20130.75) stops drafting early when the draft model is uncertain, reducing wasted verification passes."
     },
     {
       "key": "ubatch_size",

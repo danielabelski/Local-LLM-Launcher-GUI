@@ -337,9 +337,14 @@ def llamacpp(model, config, capabilities, path=None):
     args = [] if '--spec-type' in raw else ['--spec-type', 'draft-mtp']
     if '--spec-type' in raw:
         notes.append('Your extra raw flags set --spec-type, so the launcher leaves out its own; include draft-mtp there to keep MTP.')
-    args += ['--spec-draft-n-max', str(draft_max)]
-    if head:
+    if config.get('spec_draft_n_max') is None:
+        args += ['--spec-draft-n-max', str(draft_max)]
+    else:
+        draft_max = config['spec_draft_n_max']
+    if head and not config.get('spec_draft_model'):
         args += ['--spec-draft-model', head]
+    elif head and config.get('spec_draft_model'):
+        notes.append('Your speculative draft model setting overrides the automatic MTP head file.')
     if raw & {'--spec-draft-model', '-md', '--model-draft', '--spec-draft-n-max'}:
         notes.append('Your extra raw flags also set draft options; those take priority.')
     source = f'the separate head file {Path(head).name}' if head else "the model's built-in MTP layers"

@@ -29,7 +29,7 @@ def _write_env_file(env: Dict[str, str]) -> str:
 def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     validate("vllm-docker", config)
     # Build vLLM flags with the *container* port, not the host port.
-    container_cfg = dict(config)
+    container_cfg = {k: v for k, v in config.items() if k != "host"}
     host_port = int(config.get("port", 8000))
     container_cfg["port"] = 8000
     flags, env, extra = build_args_and_env("vllm", container_cfg)
@@ -37,7 +37,8 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     container_name = f"llml-{uuid.uuid4().hex[:8]}"
     device_ids = normalize_device_ids(config.get("device_ids"))
     gpus = f'"device={device_ids}"' if device_ids is not None else "all"
-    host = config.get("host", "127.0.0.1")
+    raw_host = config.get("host")
+    host = "127.0.0.1" if raw_host is None else str(raw_host).strip()
 
     argv = [
         "docker", "run", "--rm",

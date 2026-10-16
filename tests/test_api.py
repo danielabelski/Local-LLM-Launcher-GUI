@@ -130,6 +130,20 @@ def test_launch_injects_lan_host_when_enabled(client, monkeypatch):
     assert captured["host"] == "0.0.0.0"
 
 
+def test_launch_preserves_explicit_host(client, monkeypatch):
+    import local_llm_launcher.api as api
+
+    captured = {}
+    monkeypatch.setattr(api, "find_model", lambda repo_id: {**FAKE_MODEL, "repo_id": repo_id})
+    monkeypatch.setattr(api, "get_hardware", lambda: {"engines": {"llamacpp_path": None, "vllm_native": True}})
+    monkeypatch.setattr(api.servers, "launch",
+                        lambda mode, model, config, llamacpp_binary=None, vllm_binary=None, hardware=None: _record(captured, mode, config))
+
+    client.patch("/api/settings", json={"lan_access": False})
+    client.post("/api/servers", json={"engine_mode": "vllm-native", "repo_id": "org/model-8B", "config": {"host": "192.168.1.10"}})
+    assert captured["host"] == "192.168.1.10"
+
+
 def _record(captured, mode, config):
     captured["host"] = config.get("host")
     return _StubServer()

@@ -248,7 +248,8 @@ def api_launch(body: LaunchRequest):
     config = dict(body.config)
     if body.engine_mode.startswith("vllm") and settings.data.get("hf_token") and not config.get("hf_token"):
         config["hf_token"] = settings.data["hf_token"]
-    config["host"] = "0.0.0.0" if settings.data.get("lan_access") else "127.0.0.1"
+    explicit_host = str(config.get("host") or "").strip()
+    config["host"] = explicit_host or ("0.0.0.0" if settings.data.get("lan_access") else "127.0.0.1")
     hw = get_hardware()
     if body.engine_mode == "llamacpp" and not hw["engines"].get("llamacpp_path"):
         raise HTTPException(400, "llama.cpp (llama-server) was not found on this computer. "

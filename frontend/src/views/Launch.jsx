@@ -55,13 +55,14 @@ function FlagControl({ spec, value, onChange }) {
     )
   }
   if (spec.type === 'float') {
+    const num = typeof v === 'number' && !Number.isNaN(v) ? v : (spec.default ?? spec.min ?? 0)
     return (
       <span className="row">
         <input type="range" min={spec.min} max={spec.max} step={spec.step || 0.01}
-          value={v || spec.min}
+          value={num}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           aria-label={spec.label} />
-        <span className="mono small" style={{ width: 44 }}>{(v || spec.min).toFixed(2)}</span>
+        <span className="mono small" style={{ width: 44 }}>{num.toFixed(2)}</span>
       </span>
     )
   }
@@ -176,6 +177,8 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
       if (key === "cpu_moe" && value) delete next.n_cpu_moe
       if (key === "n_cpu_moe" && value > 0) delete next.cpu_moe
       if (key === "split_mode" && value === "none") delete next.tensor_split
+      if (key === "system_prompt" && value) delete next.system_prompt_file
+      if (key === "system_prompt_file" && value) delete next.system_prompt
       if (value === null || value === undefined) delete next[key]
       else next[key] = value
       return next
