@@ -6,12 +6,16 @@ import Models from './views/Models.jsx'
 import Launch from './views/Launch.jsx'
 import Servers from './views/Servers.jsx'
 import Settings from './views/Settings.jsx'
+import Favorites from './views/Favorites.jsx'
+import Benchmarks from './views/Benchmarks.jsx'
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: '■' },
   { id: 'models', label: 'Models', icon: '▶', badge: true },
   { id: 'launch', label: 'Launch', icon: '⚡' },
+  { id: 'favorites', label: 'Favorites', icon: '☆', submenu: true },
   { id: 'servers', label: 'Servers', icon: '⚙' },
+  { id: 'benchmarks', label: 'Benchmarks', icon: '▥' },
   { id: 'settings', label: 'Settings', icon: '✎' },
 ]
 
@@ -19,7 +23,9 @@ const BREADCRUMBS = {
   dashboard: 'Overview / System status',
   models: 'Library / Installed & search',
   launch: 'Launch / Configure & start',
+  favorites: 'Launch / Favorites',
   servers: 'Servers / Running instances',
+  benchmarks: 'Benchmarks / Recorded performance',
   settings: 'Settings / Configuration',
 }
 
@@ -31,6 +37,7 @@ export default function App() {
   const [launchModel, setLaunchModel] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [version, setVersion] = useState(null)
+  const [selectedServer, setSelectedServer] = useState(null)
   const serversRequest = useRef(null)
   const hardwareRequest = useRef(null)
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
@@ -110,6 +117,11 @@ export default function App() {
   }, [])
 
   const running = servers.filter((s) => s.running).length
+  const favoriteLaunched = async (server) => {
+    await refreshServers()
+    setSelectedServer(server.id)
+    setTab(current => current === 'favorites' ? 'servers' : current)
+  }
   const vramUsed = hardware?.total_vram_mb
     ? ((hardware.gpus ?? []).reduce((sum, gpu) => sum + Math.max(0, gpu.vram_total_mb - gpu.vram_free_mb), 0) / 1024).toFixed(1)
     : null
@@ -137,7 +149,8 @@ export default function App() {
           {TABS.map((t) => (
             <button
               key={t.id}
-              className={`sb-btn ${tab === t.id ? 'active' : ''}`}
+              className={`sb-btn ${t.submenu ? 'sb-submenu' : ''} ${tab === t.id ? 'active' : ''}`}
+              aria-current={tab === t.id ? 'page' : undefined}
               onClick={() => setTab(t.id)}
             >
               <span className="sb-icon">{t.icon}</span>
@@ -182,7 +195,9 @@ export default function App() {
             <Launch hardware={hardware} initialModel={launchModel} notify={notify}
               onLaunched={() => { refreshServers(); setTab('servers') }} />
           )}
-          {tab === 'servers' && <Servers servers={servers} refresh={refreshServers} notify={notify} />}
+          {tab === 'favorites' && <Favorites onLaunched={favoriteLaunched} notify={notify} />}
+          {tab === 'servers' && <Servers servers={servers} refresh={refreshServers} notify={notify} selectedServer={selectedServer} />}
+          {tab === 'benchmarks' && <Benchmarks />}
           {tab === 'settings' && <Settings hardware={hardware} notify={notify} />}
         </div>
       </main>

@@ -100,6 +100,10 @@ class ServerManager:
         # seconds, and status polling, logs and stop all need this lock.
         vllm_backends.validate(engine_mode, model, config, hardware, vllm_binary or "vllm")
         config = dict(config)
+        if engine_mode == "llamacpp" and model.get("gguf_files"):
+            selected_path = llamacpp.pick_gguf_path(model, config)
+            config["gguf_file"] = next(f["filename"] for f in model["gguf_files"]
+                                       if f["path"] == selected_path)
         if config.get("use_mtp"):
             decision = mtp.resolve(engine_mode, model, config, vllm_binary=vllm_binary or "vllm",
                                    llama_binary=llamacpp_binary or "llama-server")
@@ -127,6 +131,7 @@ class ServerManager:
                 container_name=spec.get("container_name"),
                 env_file=spec.get("env_file"),
                 watchdog_minutes=_watchdog_minutes(engine_mode, config),
+                config=config,
             )
             started = srv.start()
             if not started:
