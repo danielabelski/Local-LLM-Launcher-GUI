@@ -3,6 +3,11 @@
 All notable changes to this project, in the order they happened. Dates are
 when the work was done.
 
+## 2026-10-18 — v0.5.6
+
+- Added **named launch favorites** (save a launch, relaunch it later) and a **benchmark log** with run-to-run comparison (PR branch `feat/favorites-log-benchmarks`, issue #28).
+- Favorites never save `host`, credentials or internal fields: a relaunch follows the current Settings LAN toggle, so a favorite saved with LAN access on cannot reopen the LAN after it is switched off. This changes how favorites interact with the v0.5.5 `--host` control; an explicit host must be set again on each launch.
+
 ## 2026-10-16 — v0.5.5
 
 - Added main-section `llama.cpp` and `vLLM` launch controls:

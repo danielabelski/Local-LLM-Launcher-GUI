@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 import httpx
 import psutil
 
+from .. import catalog
+
 
 class LocalServer:
     def __init__(
@@ -35,7 +37,11 @@ class LocalServer:
         pid_create_time: Optional[float] = None,
         env_file: Optional[str] = None,
         watchdog_minutes: int = 0,
+        config: Optional[Dict[str, Any]] = None,
+        config_save_error: Optional[str] = None,
     ) -> None:
+        self.config, sanitization_error = catalog.safe_launch_config(engine, config) if config is not None else (None, None)
+        self.config_save_error = config_save_error or sanitization_error
         self.server_id = server_id
         self.engine = engine
         self.model_label = model_label
@@ -58,7 +64,7 @@ class LocalServer:
         else:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             safe = model_label.replace("/", "_")
-            self.log_path = log_dir / f"{engine}_{safe}_{stamp}.log"
+            self.log_path = log_dir / f"{engine}_{safe}_{stamp}_{server_id}.log"
 
     # ------------------------------------------------------------------ control
 
@@ -170,6 +176,8 @@ class LocalServer:
             "engine": self.engine,
             "model": self.model_label,
             "port": self.port,
+            "config": self.config,
+            "config_save_error": self.config_save_error,
             "running": running,
             "pid": self.pid,
             "started_at": self.started_at,
@@ -233,6 +241,8 @@ class LocalServer:
             "engine": self.engine,
             "model_label": self.model_label,
             "port": self.port,
+            "config": self.config,
+            "config_save_error": self.config_save_error,
             "argv": self.argv,
             "env_keys": sorted(self.env.keys()),  # never persist env values (tokens)
             "container_name": self.container_name,
@@ -261,4 +271,6 @@ class LocalServer:
             pid_create_time=record.get("pid_create_time"),
             env_file=record.get("env_file"),
             watchdog_minutes=int(record.get("watchdog_minutes") or 0),
+            config=record.get("config"),
+            config_save_error=record.get("config_save_error"),
         )

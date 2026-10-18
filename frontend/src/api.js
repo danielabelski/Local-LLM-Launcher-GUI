@@ -35,6 +35,11 @@ export const api = {
   launch: (engineMode, repoId, config) =>
     request('/api/servers', { method: 'POST', body: JSON.stringify({ engine_mode: engineMode, repo_id: repoId, config }) }),
   servers: () => request('/api/servers'),
+  favorites: () => request('/api/favorites'),
+  saveFavorite: (id, name) => request(`/api/servers/${id}/favorites`, { method: 'POST', body: JSON.stringify({ name }) }),
+  launchFavorite: (id) => request(`/api/favorites/${id}/launch`, { method: 'POST' }),
+  benchmarks: () => request('/api/benchmarks'),
+  benchmark: (id) => request(`/api/servers/${id}/benchmark`, { method: 'POST' }),
   serverLogs: (id, n = 200) => request(`/api/servers/${id}/logs?n=${n}`),
   stopServer: (id) => request(`/api/servers/${id}/stop`, { method: 'POST' }),
   removeServer: (id) => request(`/api/servers/${id}`, { method: 'DELETE' }),
