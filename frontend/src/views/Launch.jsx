@@ -118,7 +118,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   const [restoreKey, setRestoreKey] = useState(0)
   const debounce = useRef(null)
   const initializedModel = useRef(null)
-  const pendingSettings = useRef(initialModel?.config ? initialModel : null)
+  const pendingSettings = useRef(initialModel?.engine_mode && initialModel?.config ? initialModel : null)
   const configEdited = useRef(false)
 
   const model = useMemo(() => models.find((m) => m.repo_id === repoId), [models, repoId])
@@ -278,7 +278,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
           </div>
         </div>
         <div style={{ padding: '14px 20px' }} className="stack">
-          {initialModel?.config && initialModel.repo_id === repoId && <p className="small muted">Editing a copy of “{initialModel.name}”. Review the settings below before launching.</p>}
+          {initialModel?.engine_mode && initialModel?.config && initialModel.repo_id === repoId && <p className="small muted">Editing a copy of “{initialModel.name}”. Review the settings below before launching.</p>}
           {previous && <div className="previous-launch">
             <button className="btn btn-ghost sm" disabled={previous.config == null || !!previous.config_save_error || configLoading || launching}
               onClick={restorePrevious}>Reload previous settings</button>
