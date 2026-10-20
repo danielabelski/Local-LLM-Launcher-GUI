@@ -69,7 +69,9 @@ def test_save_reload_and_relaunch_with_current_environment(client, tmp_path, mon
     assert client.post(f"/api/favorites/{favorite['id']}/launch").json() == {"id": "relaunch"}
     assert seen["config"] == {**favorite["config"], "hf_token": "current-token", "host": "127.0.0.1"}
     assert seen["kwargs"]["vllm_binary"] == "/new/vllm"
-    assert client.get("/api/favorites").json() == {"favorites": [favorite]}
+    assert client.get("/api/favorites").json() == {
+        "favorites": [favorite], "archive_path": str(tmp_path / "favorites-archive.json"),
+    }
     assert "current-token" not in client.get("/api/settings").text
 
 
