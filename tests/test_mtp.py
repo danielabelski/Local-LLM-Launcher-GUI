@@ -132,7 +132,7 @@ def test_probe_reads_mtp_names_from_source_without_importing(tmp_path):
 
 @pytest.fixture
 def client(monkeypatch):
-    hw = {"gpus": [{"index": 0, "name": "RTX 5060 Ti", "compute_capability": "12.0",
+    hw = {"gpus": [{"index": 0, "name": "Example GPU", "compute_capability": "12.0",
                     "vram_total_mb": 16384, "vram_free_mb": 15000}],
           "engines": {"vllm_native": True, "vllm_docker": True}, "ram_gb": 64, "cpu_cores": 32, "apple_silicon": None}
     monkeypatch.setattr(api, "find_model", lambda _: QWEN_NEXT)

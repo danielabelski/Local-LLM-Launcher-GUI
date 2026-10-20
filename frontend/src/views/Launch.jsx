@@ -112,45 +112,75 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   const [advice, setAdvice] = useState(null)
   const [adviceError, setAdviceError] = useState(null)
   const [launching, setLaunching] = useState(false)
+  const [previous, setPrevious] = useState(null)
+  const [previousError, setPreviousError] = useState('')
+  const [configLoading, setConfigLoading] = useState(false)
+  const [restoreKey, setRestoreKey] = useState(0)
   const debounce = useRef(null)
   const initializedModel = useRef(null)
+  const pendingSettings = useRef(initialModel?.config ? initialModel : null)
+  const configEdited = useRef(false)
 
   const model = useMemo(() => models.find((m) => m.repo_id === repoId), [models, repoId])
 
   useEffect(() => {
+    let active = true
     api.models().then((r) => {
+      if (!active) return
       const list = r?.models ?? []
       setModels(list)
       if (!repoId && list.length > 0) setRepoId(initialModel?.repo_id ?? list[0].repo_id)
-    }).catch(() => setModels([]))
+    }).catch(() => { if (active) setModels([]) })
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
     if (!model || !hardware || initializedModel.current === model.repo_id) return
     initializedModel.current = model.repo_id
-    const mode = defaultEngineMode(model, hardware)
+    const mode = initialModel?.repo_id === model.repo_id && initialModel?.engine_mode
+      ? initialModel.engine_mode : defaultEngineMode(model, hardware)
     setEngineMode(mode)
   }, [model, hardware])
+
+  useEffect(() => {
+    if (!repoId) return
+    let active = true
+    setPrevious(null)
+    setPreviousError('')
+    api.previousLaunch(repoId).then(result => { if (active) setPrevious(result.previous) })
+      .catch(error => { if (active) setPreviousError(error.message) })
+    return () => { active = false }
+  }, [repoId])
 
   useEffect(() => {
     if (!model || !engineMode) return
     let active = true
     const eng = adviceEngine(engineMode)
+    const saved = pendingSettings.current?.repo_id === model.repo_id && pendingSettings.current?.engine_mode === engineMode
+      ? pendingSettings.current : null
+    configEdited.current = false
+    setConfigLoading(true)
     setCatalog(null)
     setPresets([])
-    setConfig({})
+    setActivePreset(null)
+    setConfig(saved ? { ...saved.config } : {})
     api.catalog(eng).then((result) => { if (active) setCatalog(result) }).catch(() => { if (active) setCatalog(null) })
     api.presets(eng, model.repo_id).then((r) => {
       if (!active) return
       const ps = r?.presets ?? []
       setPresets(ps)
-      if (ps.length > 0) {
+      if (ps.length > 0 && !saved && !configEdited.current) {
         setConfig({ ...ps[0].config })
         setActivePreset(ps[0].name)
       }
-    }).catch(() => { if (active) setPresets([]) })
+    }).catch(() => { if (active) setPresets([]) }).finally(() => {
+      if (active) {
+        if (pendingSettings.current === saved) pendingSettings.current = null
+        setConfigLoading(false)
+      }
+    })
     return () => { active = false }
-  }, [model, engineMode])
+  }, [model, engineMode, restoreKey])
 
   useEffect(() => {
     if (!model || !engineMode) return
@@ -171,6 +201,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   }, [model, engineMode, config])
 
   const setFlag = useCallback((key, value) => {
+    configEdited.current = true
     setActivePreset(null)
     setConfig((c) => {
       const next = { ...c }
@@ -186,8 +217,15 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   }, [])
 
   const applyPreset = (p) => {
+    configEdited.current = true
     setConfig({ ...p.config })
     setActivePreset(p.name)
+  }
+
+  const restorePrevious = () => {
+    pendingSettings.current = { repo_id: repoId, engine_mode: previous.engine, config: previous.config }
+    setEngineMode(previous.engine)
+    setRestoreKey(value => value + 1)
   }
 
   const launch = async () => {
@@ -239,6 +277,21 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
           </div>
         </div>
         <div style={{ padding: '14px 20px' }} className="stack">
+          {initialModel?.config && initialModel.repo_id === repoId && <p className="small muted">Editing a copy of “{initialModel.name}”. Review the settings below before launching.</p>}
+          {previous && <div className="previous-launch">
+            <button className="btn btn-ghost sm" disabled={previous.config == null || !!previous.config_save_error || configLoading || launching}
+              onClick={restorePrevious}>Reload previous settings</button>
+            <p className="small" style={{ marginTop: 6 }}>
+              Previous load: <strong>{{ successful: 'Successful', failed: 'Failed', loading: 'Still loading', unknown: 'Outcome unavailable' }[previous.load_status] ?? 'Outcome unavailable'}</strong>
+              {' · '}{ENGINE_LABELS[previous.engine] ?? previous.engine}
+              {previous.started_at && ` · ${new Date(previous.started_at).toLocaleString()}`}
+              {previous.load_status === 'successful' && !previous.running && ' · Server stopped'}
+            </p>
+            {previous.failure_explanation && <p className="small muted">{previous.failure_explanation}</p>}
+            {previous.config_save_error && <p className="small muted">{previous.config_save_error}</p>}
+            {previous.config == null && <p className="small muted">This older launch has no saved settings.</p>}
+          </div>}
+          {previousError && <p className="small muted">Previous settings could not be loaded: {previousError}</p>}
           <div className="grid2">
             <label className="stack" style={{ gap: 4 }}>
               <span className="small muted">Model</span>
@@ -283,7 +336,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
                 <button key={p.name}
                   className={`btn ${activePreset === p.name ? 'btn-primary' : 'btn-ghost'} sm`}
                   title={p.description}
-                  onClick={() => applyPreset(p)}>
+                  disabled={configLoading} onClick={() => applyPreset(p)}>
                   {p.name}
                 </button>
               ))}
@@ -386,7 +439,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
           </div>
           <button
             className={`launchbtn ${warned ? 'warned' : level === 'yellow' ? 'caution' : level === 'red' ? 'nogo' : ''}`}
-            disabled={launching || (level === 'red' && !warned) || !advice}
+            disabled={launching || configLoading || (level === 'red' && !warned) || !advice}
             onClick={launch}>
             {launching ? 'Launching…' : warned ? 'BAD IDEA – YOU HAVE BEEN WARNED' : level === 'yellow' ? 'Launch anyway' : 'Launch'}
           </button>

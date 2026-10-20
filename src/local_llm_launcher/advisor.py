@@ -29,18 +29,11 @@ CUDA_OVERHEAD_GB = 1.7
 LOAD_BUFFER_GB = 1.3
 # Working buffer inside the pool for activations/compile scratch.
 WORKING_BUFFER_GB = 1.0
-# Per-GPU activation/compile working set that sits inside vLLM's managed pool
-# alongside the weights, before any KV cache. Calibrated against an observed
-# load: a 16 GB card at util 0.85 (pool ~13.5 GB) loaded 11.63 GB of weights and
-# had only ~0.09 GB left for KV — implying ~1.8 GB of working set.
+# Per-GPU activation/compile allowance inside the managed pool, before KV cache.
 VLLM_WORKING_SET_PER_GPU_GB = 1.8
-# llama.cpp's working ("compute") buffer, reserved on every card. Fitted to its own
-# buffer reports on gpuhost (2026-10-06, build 1537a0a8, two RTX 5060 Ti, flash
-# attention on; Qwen3.8 27B at 65k-262k context and Gemma 4 12B at 32k-128k, micro-
-# batches of 128-1024 tokens), within 12%, always on the high side: each micro-batch
-# token needs an f16 attention-mask row across the whole context plus ~0.25 MiB of
-# activations, and a quantized KV cache adds an f16 copy of the widest layer's K and V
-# that flash attention reads. Without flash attention the buffer is larger (unmeasured).
+# Approximate per-GPU compute buffer: an f16 attention-mask row per micro-batch
+# token, activation scratch, and an f16 layer copy when reading quantized KV.
+# Actual allocation depends on architecture, backend and engine version.
 _MASK_BYTES = 2
 _ACTIVATION_BYTES_PER_UBATCH_TOKEN = 0.25 * MB
 _FULL_PRECISION = {"f32", "f16", "bf16"}

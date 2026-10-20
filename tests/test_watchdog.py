@@ -1,9 +1,8 @@
 """Tests for the freeze watchdog: a llama-server whose work loop hangs gets stopped.
 
-A frozen llama-server (2026-10-06, gpuhost) kept accepting connections and logging
-"cancel task" for 18 minutes while its work loop never ran again. /health answers
-without the work loop; /slots needs it, so a /slots request that times out while
-the process lives is the freeze signal.
+A frozen llama-server may keep accepting connections while its work loop is
+stuck. /health answers without that loop; /slots needs it, so a /slots request
+that times out while the process lives is the freeze signal.
 """
 import sys
 

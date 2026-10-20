@@ -44,8 +44,7 @@ _LLAMA_CHECKED_THROUGH = 11235
 _LLAMA_SIDECAR_ONLY = {'gemma4'}
 _LLAMA_UPDATE = 'Update llama.cpp (Settings → Build current engine source, or install a newer release).' + _RUN_WITHOUT
 # Before build 9235 llama.cpp drafted up to 16 tokens; 3 is its tuned default since.
-# The launcher defaults to 1: on 2026-10-05, build 1537a0a8 crashed or froze three
-# times with 3 (two Qwen3.8 27B files, two RTX 5060 Ti) and held up with 1.
+# The launcher uses a conservative default; larger drafts depend on the workload.
 _LLAMA_DRAFT_DEFAULT, _LLAMA_DRAFT_RANGE = 1, (1, 16)
 
 

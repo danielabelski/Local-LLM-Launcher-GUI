@@ -2,7 +2,7 @@ import pytest
 from local_llm_launcher import hardware, advisor
 from local_llm_launcher.engines import llamacpp, vllm_native, vllm_docker
 from tests.test_engines import GGUF, MODEL
-from tests.test_advisor import DUAL_5060TI
+from tests.test_advisor import DUAL_GPU_16GB
 
 @pytest.mark.parametrize('config', [
     {'tensor_split': '1,0'}, {'tensor_split': 'nan,1'}, {'tensor_split': '1,'},
@@ -13,14 +13,14 @@ from tests.test_advisor import DUAL_5060TI
 ])
 def test_invalid_placement_rejected(config):
     with pytest.raises(ValueError): llamacpp.build(GGUF, config)
-    with pytest.raises(ValueError): advisor.advise('llamacpp', GGUF, config, DUAL_5060TI)
+    with pytest.raises(ValueError): advisor.advise('llamacpp', GGUF, config, DUAL_GPU_16GB)
 
 def test_explicit_placement():
     cfg = dict(device='CUDA0,CUDA1,CUDA2', tensor_split='40,40,40', split_mode='layer', n_cpu_moe=26, ubatch_size=256, numa='distribute')
     argv = llamacpp.build(GGUF, cfg)['argv']
     for flag, value in [('--device', cfg['device']), ('--tensor-split', '40,40,40'), ('--n-cpu-moe', '26'), ('--ubatch-size', '256'), ('--numa', 'distribute')]:
         assert argv[argv.index(flag)+1] == value
-    report = advisor.advise('llamacpp', GGUF, cfg, DUAL_5060TI)
+    report = advisor.advise('llamacpp', GGUF, cfg, DUAL_GPU_16GB)
     assert report['overall']['level'] == 'yellow'
     assert report['budget']['fit_unknown'] is True
 
@@ -76,7 +76,7 @@ def test_placement_api_rejects_before_launch(monkeypatch):
     from local_llm_launcher.app import create_app
     from local_llm_launcher import api
     monkeypatch.setattr(api,'find_model',lambda _:GGUF)
-    monkeypatch.setattr(api,'get_hardware',lambda:DUAL_5060TI)
+    monkeypatch.setattr(api,'get_hardware',lambda:DUAL_GPU_16GB)
     client=TestClient(create_app(),base_url='http://127.0.0.1')
     for path, fields in [('/api/advise',{'engine':'llamacpp'}),('/api/servers',{'engine_mode':'llamacpp'})]:
         response=client.post(path,json={**fields,'repo_id':GGUF['repo_id'],'config':{'split_mode':'tensor','flash_attn':'off'}})
@@ -88,7 +88,7 @@ def test_placement_api_rejects_before_launch(monkeypatch):
 
 @pytest.mark.parametrize('count',[None,1,2])
 def test_numa_advice_without_automatic_policy(count):
-    hw={**DUAL_5060TI,'numa':{'node_count':count}}
+    hw={**DUAL_GPU_16GB,'numa':{'node_count':count}}
     report=advisor.advise('llamacpp',GGUF,{'numa':'distribute'},hw)
     message=report['flags']['numa']['message']
     assert ('nothing to spread across' in message)==(count==1)
@@ -97,14 +97,14 @@ def test_numa_advice_without_automatic_policy(count):
 
 
 def test_raw_flags_unknown_fit_keep_order():
-    report=advisor.advise('llamacpp',GGUF,{'extra_args':'--ctx-size 100000'},DUAL_5060TI)
+    report=advisor.advise('llamacpp',GGUF,{'extra_args':'--ctx-size 100000'},DUAL_GPU_16GB)
     assert report['overall']['level']=='yellow' and report['budget']['pct'] is None
     argv=llamacpp.build(GGUF,{'ctx_size':8192,'extra_args':'--ctx-size 100000'})['argv']
     assert argv[-2:]==['--ctx-size','100000']
 
 
 def test_null_offload_is_unset():
-    assert advisor.advise('llamacpp', GGUF, {'n_cpu_moe': None}, DUAL_5060TI)['overall'] == advisor.advise('llamacpp', GGUF, {}, DUAL_5060TI)['overall']
+    assert advisor.advise('llamacpp', GGUF, {'n_cpu_moe': None}, DUAL_GPU_16GB)['overall'] == advisor.advise('llamacpp', GGUF, {}, DUAL_GPU_16GB)['overall']
 
 
 @pytest.mark.parametrize('raw, expected', [

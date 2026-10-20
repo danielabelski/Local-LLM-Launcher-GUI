@@ -26,7 +26,7 @@ Scope: issues #7, #8, #9, #10, #11, #13, #15, #16, plus the requested NUMA contr
 
 ## Hardware verification limits
 
-Development VM100 has no GPU and exposes one NUMA node (CPU and memory locality group), although its physical Proxmox host has two CPUs. NUMA controls target all supported users, including ordinary dual-CPU bare-metal machines. Tests must include multiple visible nodes; do not automatically enable NUMA options or infer host topology from virtualization.
+Visible NUMA nodes (CPU and memory locality groups) vary across systems. NUMA controls target all supported users, including ordinary dual-CPU bare-metal machines. Tests must include multiple visible nodes; do not automatically enable NUMA options or infer host topology from virtualization.
 
 Actual multi-GPU inference and CUDA source builds cannot be verified on this VM. Command construction, validation, failure handling, and browser behavior are verified here; hardware performance is not claimed.
 

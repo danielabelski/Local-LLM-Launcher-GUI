@@ -277,7 +277,29 @@ class FavoriteRequest(BaseModel):
 
 @router.get("/favorites")
 def api_favorites():
-    return {"favorites": settings.data["favorites"]}
+    return {"favorites": settings.data["favorites"], "archive_path": str(settings.favorites_archive)}
+
+
+@router.delete("/favorites/{favorite_id}")
+def api_archive_favorite(favorite_id: str):
+    try:
+        settings.archive_favorite(favorite_id)
+    except KeyError:
+        raise HTTPException(404, "No such favorite.")
+    except (OSError, ValueError, TypeError):
+        raise HTTPException(500, "Could not archive this favorite. It has not been removed from active settings.")
+    return {"ok": True, "archive_path": str(settings.favorites_archive)}
+
+
+@router.get("/previous-launch")
+def api_previous_launch(repo_id: str):
+    previous = [s for s in servers.list() if s["model"] == repo_id]
+    if not previous:
+        return {"previous": None}
+    status = _enrich(max(previous, key=lambda s: s.get("started_at") or ""))
+    return {"previous": {key: status.get(key) for key in (
+        "id", "engine", "model", "config", "config_save_error", "load_status",
+        "started_at", "running", "healthy", "exit_code", "failure_explanation")}}
 
 
 @router.post("/servers/{server_id}/favorites")
@@ -353,10 +375,15 @@ def _enrich(status: Dict[str, Any]) -> Dict[str, Any]:
         return status
     if status["running"]:
         status["healthy"] = srv.health()
+        if status["healthy"]:
+            servers.record_load_status(status["id"], "successful")
     else:
         friendly = failures.translate(srv.tail_logs(300))
         if friendly:
             status["failure_explanation"] = friendly
+        if srv.load_status == "loading" or (srv.load_status == "unknown" and friendly):
+            servers.record_load_status(status["id"], "failed")
+    status["load_status"] = srv.load_status
     return status
 
 

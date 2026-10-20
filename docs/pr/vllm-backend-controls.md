@@ -6,7 +6,7 @@ Branch: `feat/vllm-blackwell-controls`, based at `27fb558`. Its prerequisite, [P
 
 ## Summary
 
-- Add advanced linear, MoE (mixture-of-experts), and attention backend selectors, including FlashInfer options and optional B12X implementations for SM120/121 GPUs such as RTX 5060 Ti.
+- Add advanced linear, MoE (mixture-of-experts), and attention backend selectors, including FlashInfer options and optional B12X implementations for SM120/121 GPUs.
 - Preserve automatic defaults; inspect the configured native executable's supported flags/choices and optional package availability. Keep Docker evidence independent and explicitly unverified.
 - Reject known precision/cache/parallelism/GPU conflicts through both advice and launch. Honor targeted trailing raw overrides and distinguish uncertainty from incompatibility.
 - Use the actual vLLM 0.30 attention spelling `B12X`, correcting stale `B12X_ATTN` release discussion.
@@ -31,7 +31,7 @@ No engine upgrade or dependency installation is included. Automatic NVFP4 improv
 
 ## Limitations
 
-No GPU inference or performance benchmark was possible on VM100. Package/CLI evidence does not guarantee a particular model's compiled kernels work. Docker package support remains unverified by design. No performance improvement percentage is claimed.
+Hardware performance requires independent measurement. Package/CLI evidence does not guarantee a particular model's compiled kernels work. Docker package support remains unverified by design. No performance improvement percentage is claimed.
 
 ## Post-Deploy Monitoring & Validation
 

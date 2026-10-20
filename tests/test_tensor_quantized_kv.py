@@ -9,7 +9,7 @@ from local_llm_launcher import advisor, api
 from local_llm_launcher.app import create_app
 from local_llm_launcher.engines import llamacpp
 from tests.test_engines import GGUF
-from tests.test_advisor import DUAL_5060TI, safetensors_model
+from tests.test_advisor import DUAL_GPU_16GB, safetensors_model
 
 
 @pytest.mark.parametrize("weight_quant", ["Q5_K_M", "NVFP4"])
@@ -27,7 +27,7 @@ def test_tensor_quantized_cache_preserved_in_command_and_advice(weight_quant, fl
                         ("--cache-type-k", k), ("--cache-type-v", v),
                         ("--flash-attn", flash_attn)]:
         assert argv[argv.index(flag) + 1] == value
-    report = advisor.advise("llamacpp", model, config, DUAL_5060TI)
+    report = advisor.advise("llamacpp", model, config, DUAL_GPU_16GB)
     assert report["overall"]["level"] == "yellow"
     assert report["budget"]["fit_unknown"] is True
     warning = report["flags"]["split_mode"]
@@ -43,7 +43,7 @@ def test_tensor_still_requires_flash_attention(cache):
     with pytest.raises(ValueError, match="flash attention"):
         llamacpp.build(GGUF, config)
     with pytest.raises(ValueError, match="flash attention"):
-        advisor.advise("llamacpp", GGUF, config, DUAL_5060TI)
+        advisor.advise("llamacpp", GGUF, config, DUAL_GPU_16GB)
 
 
 @pytest.mark.parametrize("cache", ["f16", "bf16", "f32"])
@@ -51,7 +51,7 @@ def test_full_precision_tensor_remains_available(cache):
     config = {"split_mode": "tensor", "cache_type_k": cache,
               "cache_type_v": cache, "flash_attn": "on"}
     assert "--split-mode" in llamacpp.build(GGUF, config)["argv"]
-    report = advisor.advise("llamacpp", GGUF, config, DUAL_5060TI)
+    report = advisor.advise("llamacpp", GGUF, config, DUAL_GPU_16GB)
     assert "#23792" not in report["flags"]["split_mode"]["message"]
 
 
@@ -59,7 +59,7 @@ def test_nvfp4_does_not_make_safetensors_loadable_in_llamacpp():
     model = safetensors_model(size_gb=5.0, params=8.0, quant="NVFP4")
     report = advisor.advise("llamacpp", model,
         {"split_mode": "tensor", "cache_type_k": "q8_0", "cache_type_v": "q8_0", "flash_attn": "on"},
-        DUAL_5060TI)
+        DUAL_GPU_16GB)
     assert report["overall"]["level"] == "red"
     assert "safetensors" in report["overall"]["headline"]
 
@@ -70,7 +70,7 @@ def test_api_advice_accepts_quantized_tensor_and_launch_passes_original_config(m
     config = {"split_mode": "tensor", "tensor_split": "1,1", "cache_type_k": "q8_0",
               "cache_type_v": "q8_0", "flash_attn": "on"}
     monkeypatch.setattr(api, "find_model", lambda _: model)
-    monkeypatch.setattr(api, "get_hardware", lambda: DUAL_5060TI)
+    monkeypatch.setattr(api, "get_hardware", lambda: DUAL_GPU_16GB)
     captured = {}
     def launch(engine_mode, actual_model, actual_config, **kwargs):
         captured.update(engine_mode=engine_mode, model=actual_model, config=actual_config)

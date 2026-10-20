@@ -9,7 +9,7 @@ depth: standard
 
 ## Goal Capsule
 
-Expose useful vLLM computation choices for RTX 5060 Ti and other supported GPUs, preserving automatic defaults and reporting known incompatibilities before launch. Build on the issue fixes at 27fb558. Commit locally; prepare a PR description without pushing or opening a remote PR, because the user's latest delivery constraint forbids pushing.
+Expose useful vLLM computation choices for supported GPUs, preserving automatic defaults and reporting known incompatibilities before launch. Build on the issue fixes at 27fb558. Commit locally; prepare a PR description without pushing or opening a remote PR, because the user's latest delivery constraint forbids pushing.
 
 ## Product Contract
 
@@ -19,7 +19,7 @@ Expose useful vLLM computation choices for RTX 5060 Ti and other supported GPUs,
 - R2. Native support checks use the selected vLLM executable and its Python environment. Missing flags/package produce actionable feedback; failed probes remain unknown. No engine/package installation occurs.
 - R3. Advice and direct launch reject definite B12X conflicts in model computation precision, KV cache, context/expert parallelism, and selected GPU architecture. Unknown model/runtime compatibility is explained rather than asserted.
 - R4. Native and Docker command builders emit the same selected vLLM flags. Docker capability state remains independent of native evidence.
-- R5. Tests prove command generation, error paths, target-runtime isolation, raw overrides, and visible control behavior. No GPU performance claim is made on VM100.
+- R5. Tests prove command generation, error paths, target-runtime isolation, raw overrides, and visible control behavior. No GPU performance claim follows from source inspection alone.
 
 ## Planning Contract
 
@@ -89,7 +89,7 @@ Expose useful vLLM computation choices for RTX 5060 Ti and other supported GPUs,
 Runtime help can fail due to CUDA imports; classify that as unknown. Package presence is not proof that compiled GPU kernels or a model work. Real GPU benchmarking remains unavailable here. Backend overrides may change memory/performance, so avoid promising fit from these checks. Native probing is bounded and cached because advice polls every eight seconds.
 
 - Existing patterns: `catalog.py`, `engines/_args.py`, `hardware.py`, `frontend/src/views/Launch.jsx`, `tests/test_placement.py`.
-- Research: `docs/research/2026-09-27-vllm-rtx-5060ti-followup.md`.
+- Research: `docs/research/2026-09-27-vllm-gpu-backends.md`.
 - [v0.30 backend choices](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/config/kernel.py).
 - [B12X attention constraints](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/v1/attention/backends/b12x.py).
 - [B12X optional dependency and model support](https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/b12x.md).

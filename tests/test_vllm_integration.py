@@ -10,7 +10,7 @@ from local_llm_launcher.engines import vllm_capabilities, vllm_docker, vllm_nati
 
 MODEL = {"repo_id": "test/model", "format": "safetensors", "size_bytes": 1024**3,
          "param_count_b": 1, "config": {"torch_dtype": "bfloat16"}}
-HW = {"gpus": [{"index": 0, "name": "RTX 5060 Ti", "compute_capability": "12.0",
+HW = {"gpus": [{"index": 0, "name": "Example GPU", "compute_capability": "12.0",
                 "vram_total_mb": 16384, "vram_free_mb": 15000}],
       "engines": {"vllm_native": True, "vllm_docker": True}, "ram_gb": 64,
       "cpu_cores": 32, "apple_silicon": None}

@@ -111,7 +111,7 @@
       "min": 1,
       "max": 16,
       "category": "performance",
-      "help": "Used only when MTP is on. How many tokens (roughly, words) the MTP layers guess ahead at each step. 1 is the safe choice. Higher numbers can be a little faster on short conversations, but on 2026-10-05 drafting 3 ahead crashed or froze llama.cpp three times on two RTX 5060 Ti cards, while 1 held up. On long conversations the speed difference is small."
+      "help": "Used only when MTP is on. How many tokens the model guesses ahead at each step. The conservative default is 1. Higher values use more memory and may improve or reduce speed depending on the model, context length and engine. Increase gradually and compare behavior on your system."
     },
     {
       "key": "batch_size",

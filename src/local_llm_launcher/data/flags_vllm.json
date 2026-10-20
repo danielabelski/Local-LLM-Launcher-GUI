@@ -278,7 +278,7 @@
       ],
       "category": "performance",
       "advanced": true,
-      "help": "Chooses the code that runs the model's main matrix math. Automatic lets vLLM pick the best one for your model and GPU; leave it there unless you are comparing speeds. b12x and flashinfer_b12x are for Blackwell GPUs with compute capability 12.0 or 12.1 (such as the RTX 5060 Ti), and b12x also needs the optional vllm[b12x] package. From vLLM 0.30, compatible NVFP4 models get the fast path automatically, and forcing a backend doesn't guarantee more speed."
+      "help": "Chooses the code that runs the model's main matrix math. Automatic lets vLLM pick the best one for your model and GPU; leave it there unless you are comparing speeds. b12x and flashinfer_b12x are for Blackwell GPUs with compute capability 12.0 or 12.1, and b12x also needs the optional vllm[b12x] package. From vLLM 0.30, compatible NVFP4 models get the fast path automatically, and forcing a backend doesn't guarantee more speed."
     },
     {
       "key": "moe_backend",

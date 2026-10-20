@@ -35,6 +35,7 @@ export default function App() {
   const [servers, setServers] = useState([])
   const [toast, setToast] = useState(null)
   const [launchModel, setLaunchModel] = useState(null)
+  const [launchKey, setLaunchKey] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [version, setVersion] = useState(null)
   const [selectedServer, setSelectedServer] = useState(null)
@@ -113,6 +114,7 @@ export default function App() {
 
   const goLaunch = useCallback((model) => {
     setLaunchModel(model)
+    setLaunchKey(value => value + 1)
     setTab('launch')
   }, [])
 
@@ -192,10 +194,10 @@ export default function App() {
           )}
           {tab === 'models' && <Models goLaunch={goLaunch} notify={notify} />}
           {tab === 'launch' && (
-            <Launch hardware={hardware} initialModel={launchModel} notify={notify}
+            <Launch key={launchKey} hardware={hardware} initialModel={launchModel} notify={notify}
               onLaunched={() => { refreshServers(); setTab('servers') }} />
           )}
-          {tab === 'favorites' && <Favorites onLaunched={favoriteLaunched} notify={notify} />}
+          {tab === 'favorites' && <Favorites onLaunched={favoriteLaunched} onEdit={goLaunch} notify={notify} />}
           {tab === 'servers' && <Servers servers={servers} refresh={refreshServers} notify={notify} selectedServer={selectedServer} />}
           {tab === 'benchmarks' && <Benchmarks />}
           {tab === 'settings' && <Settings hardware={hardware} notify={notify} />}
