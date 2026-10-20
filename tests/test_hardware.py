@@ -3,15 +3,15 @@ from local_llm_launcher import hardware
 
 
 NVIDIA_SMI_CSV = (
-    "NVIDIA GeForce RTX 5060 Ti, 16311, 15090, 12.0, 0\n"
-    "NVIDIA GeForce RTX 5060 Ti, 16311, 16100, 12.0, 1\n"
+    "Example NVIDIA GPU, 16311, 15090, 12.0, 0\n"
+    "Example NVIDIA GPU, 16311, 16100, 12.0, 1\n"
 )
 
 
 def test_parse_nvidia_smi_two_gpus():
     gpus = hardware.parse_nvidia_smi(NVIDIA_SMI_CSV)
     assert len(gpus) == 2
-    assert gpus[0].name == "NVIDIA GeForce RTX 5060 Ti"
+    assert gpus[0].name == "Example NVIDIA GPU"
     assert gpus[0].vram_total_mb == 16311
     assert gpus[0].vram_free_mb == 15090
     assert gpus[0].compute_capability == "12.0"
@@ -36,7 +36,7 @@ def test_hardware_summary_dual_gpu():
     )
     assert hw.total_vram_mb == 32622
     s = hw.summary()
-    assert "2x NVIDIA GeForce RTX 5060 Ti" in s
+    assert "2x Example NVIDIA GPU" in s
     assert "32 GB" in s  # total VRAM rounded
 
 
@@ -65,7 +65,7 @@ def test_to_dict_roundtrip():
         engines=hardware.EngineAvailability(vllm_native=True, vllm_docker=False, llamacpp_path=None),
     )
     d = hw.to_dict()
-    assert d["gpus"][0]["name"] == "NVIDIA GeForce RTX 5060 Ti"
+    assert d["gpus"][0]["name"] == "Example NVIDIA GPU"
     assert d["total_vram_mb"] == 32622
     assert d["engines"]["vllm_native"] is True
     assert isinstance(d["summary"], str)

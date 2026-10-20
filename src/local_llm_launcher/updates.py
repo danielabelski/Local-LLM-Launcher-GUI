@@ -198,8 +198,11 @@ class UpdateManager:
             env.pop('VLLM_PRECOMPILED_WHEEL_LOCATION', None)
             env.update(CC='gcc', CXX='g++', MAX_JOBS=str(check['jobs']), CMAKE_BUILD_PARALLEL_LEVEL=str(check['jobs']),
                        GIT_TERMINAL_PROMPT='0')
+            # llama.cpp derives its build number from the commit count. A
+            # shallow checkout reports build 1 and breaks capability detection.
+            fetch_options = ['--filter=blob:none'] if engine == 'llamacpp' else ['--depth', '1']
             for argv in (['git', 'init'], ['git', 'remote', 'add', 'origin', repo],
-                         ['git', 'fetch', '--depth', '1', 'origin', check['revision']],
+                         ['git', 'fetch', *fetch_options, 'origin', check['revision']],
                          ['git', 'checkout', '--detach', check['revision']]):
                 self._run(argv, source, env)
             if engine == 'llamacpp':

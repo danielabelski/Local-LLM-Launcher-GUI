@@ -39,9 +39,11 @@ class LocalServer:
         watchdog_minutes: int = 0,
         config: Optional[Dict[str, Any]] = None,
         config_save_error: Optional[str] = None,
+        load_status: str = "unknown",
     ) -> None:
         self.config, sanitization_error = catalog.safe_launch_config(engine, config) if config is not None else (None, None)
         self.config_save_error = config_save_error or sanitization_error
+        self.load_status = load_status if load_status in ("unknown", "loading", "successful", "failed") else "unknown"
         self.server_id = server_id
         self.engine = engine
         self.model_label = model_label
@@ -73,6 +75,7 @@ class LocalServer:
             return False
         env = os.environ.copy()
         env.update(self.env)
+        self.load_status = "loading"
         try:
             with open(self.log_path, "ab") as log_file:
                 log_file.write(
@@ -95,6 +98,7 @@ class LocalServer:
             self.started_at = datetime.now(timezone.utc).isoformat()
             return True
         except (OSError, subprocess.SubprocessError) as e:
+            self.load_status = "failed"
             with open(self.log_path, "ab") as log_file:
                 log_file.write(f"[launcher] failed to start: {e}\n".encode())
             return False
@@ -178,6 +182,7 @@ class LocalServer:
             "port": self.port,
             "config": self.config,
             "config_save_error": self.config_save_error,
+            "load_status": self.load_status,
             "running": running,
             "pid": self.pid,
             "started_at": self.started_at,
@@ -243,6 +248,7 @@ class LocalServer:
             "port": self.port,
             "config": self.config,
             "config_save_error": self.config_save_error,
+            "load_status": self.load_status,
             "argv": self.argv,
             "env_keys": sorted(self.env.keys()),  # never persist env values (tokens)
             "container_name": self.container_name,
@@ -273,4 +279,5 @@ class LocalServer:
             watchdog_minutes=int(record.get("watchdog_minutes") or 0),
             config=record.get("config"),
             config_save_error=record.get("config_save_error"),
+            load_status=record.get("load_status", "unknown"),
         )

@@ -78,10 +78,18 @@ def _latest_snapshot(repo_dir: Path) -> Optional[Path]:
     snaps = repo_dir / "snapshots"
     if not snaps.is_dir():
         return None
-    candidates = [d for d in snaps.iterdir() if d.is_dir()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda d: d.stat().st_mtime)
+    candidates = sorted((d for d in snaps.iterdir() if d.is_dir()),
+                        key=lambda d: d.stat().st_mtime, reverse=True)
+    # Engine metadata lookups can cache a newer revision without its weights.
+    # Keep the most recent usable local revision visible in that case.
+    for snap in candidates:
+        files = [f for f in snap.rglob("*")
+                 if f.is_file() and f.suffix.lower() in _WEIGHT_EXTS]
+        weights = [f for f in files if f.suffix.lower() == ".gguf"]
+        weights += _loaded_weights(snap, files)
+        if any(_file_size(f) > 0 for f in weights):
+            return snap
+    return None
 
 
 def _read_config(snap: Path) -> Dict[str, Any]:

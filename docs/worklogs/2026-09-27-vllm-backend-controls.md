@@ -40,7 +40,7 @@ The independent reviewer rechecked both fixes, ran 83 focused tests, and reporte
 
 ## Practical limits
 
-- VM100 has no available GPU. No RTX 5060 Ti inference or performance benchmark was performed.
+- Source and CLI validation do not establish inference performance.
 - CLI recognition and package presence do not prove compiled-kernel or full model compatibility. Warnings preserve this distinction.
 - Docker image/package support is intentionally unverified; host Python evidence is never substituted.
 - No vLLM upgrade, b12x installation, model download, host/VM change, push, or remote PR creation occurred.

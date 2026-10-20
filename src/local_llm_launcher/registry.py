@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
@@ -152,6 +153,17 @@ class ServerManager:
         with self._lock:
             return self.servers.get(server_id)
 
+    def record_load_status(self, server_id: str, load_status: str) -> None:
+        with self._lock:
+            srv = self.servers.get(server_id)
+            if srv is None or srv.load_status == load_status:
+                return
+            srv.load_status = load_status
+            try:
+                self._save()
+            except OSError:
+                logging.getLogger(__name__).warning("Could not persist the observed model load status.")
+
     def _shutdown(self, server_id: str, *, remove: bool = False) -> bool:
         with self._lock:
             srv = self.servers.get(server_id)
@@ -172,6 +184,9 @@ class ServerManager:
                     ok = True
                 else:
                     ok = srv.stop()
+                if ok and not srv.is_running() and srv.load_status == "loading":
+                    # Explicit cancellation does not prove a failed model load.
+                    srv.load_status = "unknown"
                 if remove:
                     ok = ok and not srv.is_running()
                     if ok:

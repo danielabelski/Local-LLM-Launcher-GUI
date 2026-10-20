@@ -35,8 +35,7 @@ the error into something you can actually act on.
 > [`experimental/sglang-integration`](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/tree/experimental/sglang-integration)
 > branch adds [SGLang](https://github.com/sgl-project/sglang) as a fourth
 > engine. It is **unstable** — upstream bugs in `apache-tvm-ffi` cause
-> processor loading failures and JIT crashes, especially on NVIDIA Blackwell
-> GPUs (RTX 5060 Ti). Testing only; vLLM and llama.cpp remain the reliable
+> processor loading failures and JIT crashes, especially on some NVIDIA GPU configurations. Testing only; vLLM and llama.cpp remain the reliable
 > options.
 
 ---
@@ -74,8 +73,7 @@ Leave them **automatic** unless comparing a particular implementation. vLLM
 compatible RTX 50-series models; selecting a backend does not convert a model
 to that format.
 
-The optional `b12x` implementations target SM120/121 (GPU capability versions,
-including the RTX 5060 Ti). Install the `vllm[b12x]` extra in **the same Python
+The optional `b12x` implementations target SM120/121 (GPU capability versions). Install the `vllm[b12x]` extra in **the same Python
 environment as the configured vLLM executable**, preserving your chosen vLLM
 version. Docker users need the dependency inside their image. The launcher
 does not install it automatically.
@@ -318,3 +316,23 @@ by a cryptic error.
 
 MIT — see [LICENSE](LICENSE). Portions adapted from
 [vllm-cli](https://github.com/Chen-zexi/vllm-cli), © Chen-zexi, MIT license.
+
+## Saved launch settings
+
+- **Servers → Save Launch Settings to Favorites** saves a named configuration.
+- **Favorites → Launch** starts it immediately; **Edit** opens the Launch page
+  with those settings so you can review and change them first.
+- **Archive** removes a favorite after confirmation and keeps a recovery copy
+  in one private `favorites-archive.json` file in the launcher data directory
+  (normally `~/.local-llm-launcher/`). The confirmation shows the exact path
+  on the computer running the launcher.
+- **Launch → Reload previous settings** restores the latest retained launch
+  configuration for that model, even after its server entry is removed. The note below it reports the observed load
+  outcome. Older records without an observed outcome are marked unavailable.
+  Settings are restored only when requested, and the current hardware advice
+  is recalculated before launch.
+
+The launcher can retain an older downloaded model revision when an engine has
+cached only the metadata for a newer revision. A model's repository name does
+not determine its quantization format: leave **Quantization override** empty
+unless its actual configuration requires an explicit override.

@@ -10,11 +10,11 @@ from local_llm_launcher import advisor
 
 GB = 1024**3
 
-DUAL_5060TI = {
+DUAL_GPU_16GB = {
     "gpus": [
-        {"name": "NVIDIA GeForce RTX 5060 Ti", "vram_total_mb": 16311, "vram_free_mb": 15090,
+        {"name": "Example NVIDIA GPU", "vram_total_mb": 16311, "vram_free_mb": 15090,
          "compute_capability": "12.0", "index": 0},
-        {"name": "NVIDIA GeForce RTX 5060 Ti", "vram_total_mb": 16311, "vram_free_mb": 16100,
+        {"name": "Example NVIDIA GPU", "vram_total_mb": 16311, "vram_free_mb": 16100,
          "compute_capability": "12.0", "index": 1},
     ],
     "apple_silicon": None, "cpu_cores": 24, "ram_gb": 31.0, "disk_free_gb": 500.0,
@@ -59,7 +59,7 @@ def gguf_model(size_gb=5.0, params=8.0, multimodal=False):
 def test_small_model_fits_green():
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 8192, "max_num_seqs": 1}, DUAL_5060TI)
+                        "max_model_len": 8192, "max_num_seqs": 1}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "green"
     assert a["budget"]["available_gb"] > 0
 
@@ -67,7 +67,7 @@ def test_small_model_fits_green():
 def test_huge_model_red():
     a = advisor.advise("vllm", safetensors_model(size_gb=70.0, params=70.0, quant=None),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 8192}, DUAL_5060TI)
+                        "max_model_len": 8192}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "red"
 
 
@@ -76,7 +76,7 @@ def test_memory_only_red_can_be_overridden():
     # turns into a red "you have been warned" instead of refusing.
     a = advisor.advise("vllm", safetensors_model(size_gb=70.0, params=70.0, quant=None),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 8192}, DUAL_5060TI)
+                        "max_model_len": 8192}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "red"
     assert a["overall"]["override"] is True
 
@@ -90,7 +90,7 @@ def test_load_headroom_red_can_be_overridden():
 
 
 def test_hard_blocker_cannot_be_overridden():
-    a = advisor.advise("vllm", gguf_model(), {"tensor_parallel_size": 1}, DUAL_5060TI)
+    a = advisor.advise("vllm", gguf_model(), {"tensor_parallel_size": 1}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "red"
     assert a["overall"].get("override") is not True
 
@@ -98,7 +98,7 @@ def test_hard_blocker_cannot_be_overridden():
 def test_fitting_model_has_no_override():
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 8192, "max_num_seqs": 1}, DUAL_5060TI)
+                        "max_model_len": 8192, "max_num_seqs": 1}, DUAL_GPU_16GB)
     assert a["overall"].get("override") is not True
 
 
@@ -106,20 +106,20 @@ def test_tight_model_yellow():
     # ~25GB weights on ~26GB usable budget -> yellow zone
     a = advisor.advise("vllm", safetensors_model(size_gb=21.5, params=35.0),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 4096, "max_num_seqs": 1}, DUAL_5060TI)
+                        "max_model_len": 4096, "max_num_seqs": 1}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "yellow"
 
 
 # ---------- hard blockers ----------
 
 def test_gguf_on_vllm_is_red():
-    a = advisor.advise("vllm", gguf_model(), {"tensor_parallel_size": 1}, DUAL_5060TI)
+    a = advisor.advise("vllm", gguf_model(), {"tensor_parallel_size": 1}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "red"
     assert "llama.cpp" in a["overall"]["headline"]
 
 
 def test_safetensors_on_llamacpp_is_red():
-    a = advisor.advise("llamacpp", safetensors_model(), {}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", safetensors_model(), {}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "red"
 
 
@@ -139,39 +139,39 @@ def test_util_exceeding_free_vram_red():
     # GPU 0 has 15090/16311 free => max safe util ~0.925; ask 0.95
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.95,
-                        "max_model_len": 4096}, DUAL_5060TI)
+                        "max_model_len": 4096}, DUAL_GPU_16GB)
     assert a["flags"]["gpu_memory_utilization"]["level"] == "red"
 
 
 def test_util_high_on_consumer_yellow():
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0),
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.91,
-                        "max_model_len": 4096}, DUAL_5060TI)
+                        "max_model_len": 4096}, DUAL_GPU_16GB)
     assert a["flags"]["gpu_memory_utilization"]["level"] == "yellow"
 
 
 def test_tp_more_than_gpus_red():
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0),
-                       {"tensor_parallel_size": 4}, DUAL_5060TI)
+                       {"tensor_parallel_size": 4}, DUAL_GPU_16GB)
     assert a["flags"]["tensor_parallel_size"]["level"] == "red"
 
 
 def test_tp1_when_model_needs_both_gpus_yellow():
     a = advisor.advise("vllm", safetensors_model(size_gb=20.0, params=35.0),
                        {"tensor_parallel_size": 1, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 4096}, DUAL_5060TI)
+                        "max_model_len": 4096}, DUAL_GPU_16GB)
     assert a["flags"]["tensor_parallel_size"]["level"] in ("yellow", "red")
 
 
 def test_explicit_quantization_yellow():
     a = advisor.advise("vllm", safetensors_model(),
-                       {"tensor_parallel_size": 2, "quantization": "awq"}, DUAL_5060TI)
+                       {"tensor_parallel_size": 2, "quantization": "awq"}, DUAL_GPU_16GB)
     assert a["flags"]["quantization"]["level"] == "yellow"
 
 
 def test_cpu_offload_yellow():
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0),
-                       {"tensor_parallel_size": 2, "cpu_offload_gb": 8}, DUAL_5060TI)
+                       {"tensor_parallel_size": 2, "cpu_offload_gb": 8}, DUAL_GPU_16GB)
     assert a["flags"]["cpu_offload_gb"]["level"] == "yellow"
     assert "slow" in a["flags"]["cpu_offload_gb"]["message"].lower()
 
@@ -179,14 +179,14 @@ def test_cpu_offload_yellow():
 def test_max_model_len_above_model_limit_yellow():
     cfg = {"max_position_embeddings": 32768}
     a = advisor.advise("vllm", safetensors_model(size_gb=8.0, params=8.0, config=cfg),
-                       {"tensor_parallel_size": 2, "max_model_len": 65536}, DUAL_5060TI)
+                       {"tensor_parallel_size": 2, "max_model_len": 65536}, DUAL_GPU_16GB)
     assert a["flags"]["max_model_len"]["level"] == "yellow"
 
 
 def test_reasoning_parser_hint_for_qwen3():
     m = safetensors_model(size_gb=8.0, params=8.0)
     m["repo_id"] = "Qwen/Qwen3-8B"
-    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_5060TI)
+    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_GPU_16GB)
     assert a["flags"]["reasoning_parser"]["level"] == "yellow"
 
 
@@ -196,7 +196,7 @@ def test_reasoning_parser_family_mismatch_red():
     m = safetensors_model(size_gb=23.0, params=31.0)
     m["repo_id"] = "QuantTrio/gemma-4-31B-it-AWQ-6Bit"
     a = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "reasoning_parser": "qwen3"},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     assert a["flags"]["reasoning_parser"]["level"] == "red"
     assert "gemma4" in a["flags"]["reasoning_parser"]["message"]
     # A red flag must also gate the overall verdict.
@@ -207,7 +207,7 @@ def test_reasoning_parser_matching_family_ok():
     m = safetensors_model(size_gb=23.0, params=31.0)
     m["repo_id"] = "QuantTrio/gemma-4-31B-it-AWQ-6Bit"
     a = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "reasoning_parser": "gemma4"},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     assert a["flags"].get("reasoning_parser") is None
 
 
@@ -215,7 +215,7 @@ def test_reasoning_parser_unknown_family_yellow():
     m = safetensors_model(size_gb=8.0, params=8.0)
     m["repo_id"] = "mistralai/Mistral-7B-Instruct"
     a = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "reasoning_parser": "qwen3"},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     assert a["flags"]["reasoning_parser"]["level"] == "yellow"
 
 
@@ -223,24 +223,24 @@ def test_reasoning_parser_unknown_family_yellow():
 
 def test_llamacpp_green_fit():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
-                       {"n_gpu_layers": 999, "ctx_size": 8192}, DUAL_5060TI)
+                       {"n_gpu_layers": 999, "ctx_size": 8192}, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "green"
 
 
 def test_llamacpp_zero_gpu_layers_yellow_with_gpu_present():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
-                       {"n_gpu_layers": 0, "ctx_size": 8192}, DUAL_5060TI)
+                       {"n_gpu_layers": 0, "ctx_size": 8192}, DUAL_GPU_16GB)
     assert a["flags"]["n_gpu_layers"]["level"] == "yellow"
 
 
 def test_llamacpp_v_cache_quant_without_flash_attn_red():
     a = advisor.advise("llamacpp", gguf_model(),
-                       {"cache_type_v": "q8_0", "flash_attn": "off"}, DUAL_5060TI)
+                       {"cache_type_v": "q8_0", "flash_attn": "off"}, DUAL_GPU_16GB)
     assert a["flags"]["cache_type_v"]["level"] == "red"
 
 
 def test_llamacpp_threads_above_cores_yellow():
-    a = advisor.advise("llamacpp", gguf_model(), {"threads": 64}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", gguf_model(), {"threads": 64}, DUAL_GPU_16GB)
     assert a["flags"]["threads"]["level"] == "yellow"
 
 
@@ -260,11 +260,11 @@ def test_llamacpp_cpu_only_big_model_red():
 
 def busy_gpu0_hw(free0_mb):
     """Dual 16GB cards where the desktop occupies part of GPU 0."""
-    hw = dict(DUAL_5060TI)
+    hw = dict(DUAL_GPU_16GB)
     hw["gpus"] = [
-        {"name": "RTX 5060 Ti", "vram_total_mb": 15866, "vram_free_mb": free0_mb,
+        {"name": "Example GPU", "vram_total_mb": 15866, "vram_free_mb": free0_mb,
          "compute_capability": "12.0", "index": 0},
-        {"name": "RTX 5060 Ti", "vram_total_mb": 15888, "vram_free_mb": 15737,
+        {"name": "Example GPU", "vram_total_mb": 15888, "vram_free_mb": 15737,
          "compute_capability": "12.0", "index": 1},
     ]
     return hw
@@ -304,7 +304,7 @@ def test_load_headroom_red_when_far_short():
 
 def test_multimodal_vllm_suggests_text_only():
     m = safetensors_model(size_gb=8.0, params=8.0, multimodal=True)
-    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_5060TI)
+    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_GPU_16GB)
     assert a["flags"]["language_model_only"]["level"] == "yellow"
     assert "Text-only" in a["flags"]["language_model_only"]["message"]
 
@@ -312,13 +312,13 @@ def test_multimodal_vllm_suggests_text_only():
 def test_multimodal_vllm_text_only_on_is_green():
     m = safetensors_model(size_gb=8.0, params=8.0, multimodal=True)
     a = advisor.advise("vllm", m,
-                       {"tensor_parallel_size": 2, "language_model_only": True}, DUAL_5060TI)
+                       {"tensor_parallel_size": 2, "language_model_only": True}, DUAL_GPU_16GB)
     assert a["flags"]["language_model_only"]["level"] == "green"
 
 
 def test_non_multimodal_vllm_no_text_only_flag():
     m = safetensors_model(size_gb=8.0, params=8.0, multimodal=False)
-    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_5060TI)
+    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_GPU_16GB)
     assert "language_model_only" not in a["flags"]
 
 
@@ -327,7 +327,7 @@ def test_multimodal_tight_fit_recommends_text_only_in_verdict():
     m = safetensors_model(size_gb=21.5, params=31.0, multimodal=True)
     a = advisor.advise("vllm", m,
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 4096, "max_num_seqs": 1}, DUAL_5060TI)
+                        "max_model_len": 4096, "max_num_seqs": 1}, DUAL_GPU_16GB)
     assert a["overall"]["level"] in ("yellow", "red")
     assert any("Text-only" in d for d in a["overall"]["details"])
 
@@ -337,7 +337,7 @@ def test_multimodal_text_only_on_no_verdict_nag():
     a = advisor.advise("vllm", m,
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
                         "max_model_len": 4096, "max_num_seqs": 1,
-                        "language_model_only": True}, DUAL_5060TI)
+                        "language_model_only": True}, DUAL_GPU_16GB)
     assert not any("turn on Text-only" in d for d in a["overall"]["details"])
 
 
@@ -347,11 +347,11 @@ def test_multimodal_llamacpp_explains_vision_part_is_never_loaded():
     m = gguf_model(size_gb=5.0, params=8.0, multimodal=True)
     for text_only in (False, True):
         a = advisor.advise("llamacpp", m, {"n_gpu_layers": 999, "ctx_size": 8192,
-                                           "no_mmproj": text_only}, DUAL_5060TI)
+                                           "no_mmproj": text_only}, DUAL_GPU_16GB)
         assert a["flags"]["no_mmproj"]["level"] == "green"
         assert "never loaded" in a["flags"]["no_mmproj"]["message"]
         assert a["budget"]["needed_gb"] == advisor.advise(
-            "llamacpp", m, {"n_gpu_layers": 999, "ctx_size": 8192}, DUAL_5060TI)["budget"]["needed_gb"]
+            "llamacpp", m, {"n_gpu_layers": 999, "ctx_size": 8192}, DUAL_GPU_16GB)["budget"]["needed_gb"]
 
 
 # ---------- KV-cache gate (weights fit but conversation memory starves) ----------
@@ -363,7 +363,7 @@ def test_kv_gate_flags_weights_fit_but_no_kv_room():
     a = advisor.advise("vllm", m,
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
                         "max_model_len": 4096, "max_num_seqs": 1,
-                        "kv_cache_dtype": "fp8"}, DUAL_5060TI)
+                        "kv_cache_dtype": "fp8"}, DUAL_GPU_16GB)
     joined = " ".join(a["overall"]["details"])
     assert "conversation memory" in joined or "KV cache" in joined
     assert a["overall"]["level"] in ("yellow", "red")
@@ -374,7 +374,7 @@ def test_kv_gate_quiet_when_plenty_of_room():
     m = safetensors_model(size_gb=8.0, params=8.0)
     a = advisor.advise("vllm", m,
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
-                        "max_model_len": 4096, "max_num_seqs": 1}, DUAL_5060TI)
+                        "max_model_len": 4096, "max_num_seqs": 1}, DUAL_GPU_16GB)
     assert not any("conversation memory (KV cache) and" in d for d in a["overall"]["details"])
 
 
@@ -383,7 +383,7 @@ def test_kv_gate_suggests_lower_context():
     a = advisor.advise("vllm", m,
                        {"tensor_parallel_size": 2, "gpu_memory_utilization": 0.85,
                         "max_model_len": 8192, "max_num_seqs": 1,
-                        "kv_cache_dtype": "fp8"}, DUAL_5060TI)
+                        "kv_cache_dtype": "fp8"}, DUAL_GPU_16GB)
     joined = " ".join(a["overall"]["details"])
     # Should mention a remedy: lower context, raise util, or fp8.
     assert any(w in joined for w in ("context window", "memory usage limit", "fp8"))
@@ -393,7 +393,7 @@ def test_kv_gate_suggests_lower_context():
 
 def test_presets_exist_and_are_advised():
     m = safetensors_model(size_gb=15.0, params=27.0)
-    ps = advisor.presets("vllm", m, DUAL_5060TI)
+    ps = advisor.presets("vllm", m, DUAL_GPU_16GB)
     names = [p["name"] for p in ps]
     assert "Safe (recommended)" in names
     for p in ps:
@@ -452,7 +452,7 @@ def test_llamacpp_f32_cache_changes_fit_when_memory_is_insufficient():
 def test_no_kv_offload_red_flag():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
                        {"n_gpu_layers": 999, "ctx_size": 8192, "no_kv_offload": True},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     assert a["flags"]["no_kv_offload"]["level"] == "red"
     assert "HEAVY SPEED PENALTY" in a["flags"]["no_kv_offload"]["message"]
 
@@ -460,7 +460,7 @@ def test_no_kv_offload_red_flag():
 def test_no_kv_offload_long_context_extra_warning():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
                        {"n_gpu_layers": 999, "ctx_size": 132000, "no_kv_offload": True},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     msg = a["flags"]["no_kv_offload"]["message"]
     assert "worst-case combination" in msg
 
@@ -468,23 +468,23 @@ def test_no_kv_offload_long_context_extra_warning():
 def test_no_kv_offload_zeroes_kv_in_budget():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
                        {"n_gpu_layers": 999, "ctx_size": 8192, "no_kv_offload": True},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     assert a["budget"]["kv_cache_gb"] == 0.0
 
 
 def test_no_kv_offload_reduces_needed_gb():
     normal = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
-                            {"n_gpu_layers": 999, "ctx_size": 8192}, DUAL_5060TI)
+                            {"n_gpu_layers": 999, "ctx_size": 8192}, DUAL_GPU_16GB)
     offloaded = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
                                {"n_gpu_layers": 999, "ctx_size": 8192, "no_kv_offload": True},
-                               DUAL_5060TI)
+                               DUAL_GPU_16GB)
     assert offloaded["budget"]["needed_gb"] < normal["budget"]["needed_gb"]
 
 
 def test_no_kv_offload_false_has_no_flag():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
                        {"n_gpu_layers": 999, "ctx_size": 8192, "no_kv_offload": False},
-                       DUAL_5060TI)
+                       DUAL_GPU_16GB)
     assert "no_kv_offload" not in a["flags"]
 
 
@@ -543,7 +543,7 @@ def test_llamacpp_kv_from_gguf_counts_only_attention_layers(tmp_path):
     path = _write_gguf(tmp_path / "qwen.gguf", QWEN35_27B)
     a = advisor.advise("llamacpp", _gguf_file_model(path, 15.75),
                        {"ctx_size": 200000, "flash_attn": "auto",
-                        "cache_type_k": "q8_0", "cache_type_v": "q4_0"}, DUAL_5060TI)
+                        "cache_type_k": "q8_0", "cache_type_v": "q4_0"}, DUAL_GPU_16GB)
     expected = 16 * 4 * 256 * (34 / 32 + 18 / 32) * 200000 / GB
     assert a["budget"]["kv_cache_gb"] == round(expected, 1) == 5.0
     # Two cards each reserve a working buffer, including an f16 copy of one layer's K and V.
@@ -556,14 +556,14 @@ def test_llamacpp_kv_from_gguf_dense_model_f16(tmp_path):
             "llama.attention.head_count": 32, "llama.attention.head_count_kv": 8,
             "llama.embedding_length": 4096}
     path = _write_gguf(tmp_path / "llama.gguf", meta)
-    a = advisor.advise("llamacpp", _gguf_file_model(path, 5.0), {"ctx_size": 8192}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", _gguf_file_model(path, 5.0), {"ctx_size": 8192}, DUAL_GPU_16GB)
     # head width defaults to embedding / heads = 128; K and V each 2 bytes per value.
     assert a["budget"]["kv_cache_gb"] == round(32 * 8 * 128 * 4 * 8192 / GB, 1)
 
 
 def test_llamacpp_kv_falls_back_to_guess_when_file_unreadable():
     a = advisor.advise("llamacpp", gguf_model(size_gb=5.0, params=8.0),
-                       {"ctx_size": 8192}, DUAL_5060TI)
+                       {"ctx_size": 8192}, DUAL_GPU_16GB)
     assert a["budget"]["kv_cache_gb"] == round(0.125 * 8192 / 1024, 1)
 
 
@@ -574,9 +574,9 @@ def test_llamacpp_weights_count_only_the_file_that_loads(tmp_path):
     other = _write_gguf(tmp_path / "Model-Q8_0.gguf", QWEN35_27B)
     mmproj = str(tmp_path / "mmproj-F16.gguf")
     m = _gguf_file_model(path, 10.0, [(other, 20.0), (mmproj, 1.0)])
-    a = advisor.advise("llamacpp", m, {"ctx_size": 8192}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", m, {"ctx_size": 8192}, DUAL_GPU_16GB)
     assert a["budget"]["weights_gb"] == 10.0
-    b = advisor.advise("llamacpp", m, {"ctx_size": 8192, "gguf_file": "Model-Q8_0.gguf"}, DUAL_5060TI)
+    b = advisor.advise("llamacpp", m, {"ctx_size": 8192, "gguf_file": "Model-Q8_0.gguf"}, DUAL_GPU_16GB)
     assert b["budget"]["weights_gb"] == 20.0
 
 
@@ -598,8 +598,8 @@ def test_vllm_text_only_subtracts_vision_encoder_weights(tmp_path):
     })
     m = safetensors_model(size_gb=8.0, params=8.0, multimodal=True)
     m["path"] = str(tmp_path)
-    off = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_5060TI)
-    on = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "language_model_only": True}, DUAL_5060TI)
+    off = advisor.advise("vllm", m, {"tensor_parallel_size": 2}, DUAL_GPU_16GB)
+    on = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "language_model_only": True}, DUAL_GPU_16GB)
     assert off["budget"]["weights_gb"] == 8.0
     assert on["budget"]["weights_gb"] == 6.0
     assert on["budget"]["needed_gb"] == round(off["budget"]["needed_gb"] - 2.0, 1)
@@ -607,7 +607,7 @@ def test_vllm_text_only_subtracts_vision_encoder_weights(tmp_path):
 
 def test_vllm_text_only_unchanged_when_encoder_size_unknown():
     m = safetensors_model(size_gb=8.0, params=8.0, multimodal=True)
-    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "language_model_only": True}, DUAL_5060TI)
+    a = advisor.advise("vllm", m, {"tensor_parallel_size": 2, "language_model_only": True}, DUAL_GPU_16GB)
     assert a["budget"]["weights_gb"] == 8.0
 
 
@@ -616,7 +616,7 @@ def test_llamacpp_never_picks_the_mmproj_file_as_the_model(tmp_path):
     mmproj = str(tmp_path / "mmproj-F16.gguf")
     path = _write_gguf(tmp_path / "qwen-Q4_K_M.gguf", QWEN35_27B)
     m = _gguf_file_model(mmproj, 1.0, [(path, 10.0)])
-    a = advisor.advise("llamacpp", m, {"ctx_size": 8192}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", m, {"ctx_size": 8192}, DUAL_GPU_16GB)
     assert a["budget"]["weights_gb"] == 10.0
 
 
@@ -637,7 +637,7 @@ def test_llamacpp_kv_from_gguf_sliding_window_and_per_layer_heads(tmp_path):
     path = _write_gguf(tmp_path / "gemma.gguf", GEMMA4_12B)
     a = advisor.advise("llamacpp", _gguf_file_model(path, 11.8),
                        {"ctx_size": 200000, "flash_attn": "auto", "ubatch_size": 512,
-                        "cache_type_k": "q8_0", "cache_type_v": "q4_0"}, DUAL_5060TI)
+                        "cache_type_k": "q8_0", "cache_type_v": "q4_0"}, DUAL_GPU_16GB)
     per_value = 34 / 32 + 18 / 32
     full = 8 * 1 * 512 * per_value * 200000
     # llama-server's default 4 slots share the cache, each keeping its own window.
@@ -650,7 +650,7 @@ def test_llamacpp_kv_shared_layers_keep_no_cache(tmp_path):
             "llama.attention.head_count": 32, "llama.attention.head_count_kv": 8,
             "llama.embedding_length": 4096, "llama.attention.shared_kv_layers": 16}
     path = _write_gguf(tmp_path / "shared.gguf", meta)
-    a = advisor.advise("llamacpp", _gguf_file_model(path, 5.0), {"ctx_size": 8192}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", _gguf_file_model(path, 5.0), {"ctx_size": 8192}, DUAL_GPU_16GB)
     assert a["budget"]["kv_cache_gb"] == round(16 * 8 * 128 * 4 * 8192 / GB, 1)
 
 
@@ -660,14 +660,14 @@ def test_llamacpp_draft_mtp_adds_its_own_cache_and_buffers(tmp_path):
     path = _write_gguf(tmp_path / "qwen.gguf", QWEN35_27B)
     m = _gguf_file_model(path, 15.75)
     base = {"ctx_size": 200000, "flash_attn": "auto", "cache_type_k": "q8_0", "cache_type_v": "q4_0"}
-    off = advisor.advise("llamacpp", m, base, DUAL_5060TI)["budget"]
-    on = advisor.advise("llamacpp", m, {**base, "use_mtp": True}, DUAL_5060TI)["budget"]
+    off = advisor.advise("llamacpp", m, base, DUAL_GPU_16GB)["budget"]
+    on = advisor.advise("llamacpp", m, {**base, "use_mtp": True}, DUAL_GPU_16GB)["budget"]
     mtp = (1 * 4 * 256 * 2 * 2 * 200000 + advisor._compute_bytes(200000, 512)) / GB
     assert off["mtp_gb"] == 0.0
     assert on["mtp_gb"] == round(mtp, 1)
     assert abs(on["needed_gb"] - (off["needed_gb"] + mtp)) <= 0.1
     raw = advisor.advise("llamacpp", m, {**base, "extra_args": "--spec-type draft-mtp --spec-draft-n-max 1"},
-                         DUAL_5060TI)["budget"]
+                         DUAL_GPU_16GB)["budget"]
     assert raw["mtp_gb"] == on["mtp_gb"]
 
 
@@ -676,7 +676,7 @@ def test_llamacpp_draft_mtp_adds_nothing_without_mtp_layers(tmp_path):
             "llama.attention.head_count": 32, "llama.attention.head_count_kv": 8,
             "llama.embedding_length": 4096}
     path = _write_gguf(tmp_path / "llama.gguf", meta)
-    a = advisor.advise("llamacpp", _gguf_file_model(path, 5.0), {"ctx_size": 8192, "use_mtp": True}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", _gguf_file_model(path, 5.0), {"ctx_size": 8192, "use_mtp": True}, DUAL_GPU_16GB)
     assert a["budget"]["mtp_gb"] == 0.0
 
 
@@ -687,7 +687,7 @@ def test_llamacpp_draft_mtp_counts_a_separate_head_file(tmp_path):
                  "gemma4-assistant.embedding_length": 2048}
     head = _write_gguf(tmp_path / "mtp-gemma.gguf", head_meta)
     m = _gguf_file_model(path, 11.8, [(head, 0.5)])
-    a = advisor.advise("llamacpp", m, {"ctx_size": 8192, "use_mtp": True}, DUAL_5060TI)["budget"]
+    a = advisor.advise("llamacpp", m, {"ctx_size": 8192, "use_mtp": True}, DUAL_GPU_16GB)["budget"]
     head_kv = 2 * 8 * 128 * 4 * 8192 / GB
     assert a["weights_gb"] == 11.8
     assert a["mtp_gb"] == round(0.5 + head_kv + advisor._compute_bytes(8192, 512) / GB, 1)
@@ -699,13 +699,13 @@ def test_llamacpp_draft_mtp_model_named_mtp_is_not_its_own_head(tmp_path):
     path = _write_gguf(tmp_path / "Qwen3.8-27B-NVFP4-MTP-MID-HIGH.gguf", QWEN35_27B)
     a = advisor.advise("llamacpp", _gguf_file_model(path, 15.75),
                        {"ctx_size": 200000, "cache_type_k": "q8_0", "cache_type_v": "q4_0",
-                        "flash_attn": "auto", "use_mtp": True}, DUAL_5060TI)
+                        "flash_attn": "auto", "use_mtp": True}, DUAL_GPU_16GB)
     mtp = (1 * 4 * 256 * 2 * 2 * 200000 + advisor._compute_bytes(200000, 512)) / GB
     assert a["budget"]["mtp_gb"] == round(mtp, 1) == 1.1
 
 
-# ---------- llama.cpp buffers measured on gpuhost (2026-10-06) ----------
-# llama.cpp build 1537a0a8, two RTX 5060 Ti, flash attention on, `--fit off -lv 4`;
+# ---------- llama.cpp compute-buffer reference fixtures ----------
+# Reference allocation values cover Flash Attention and different context sizes;
 # each figure is llama.cpp's own "buffer size" report, in MiB.
 
 MB = 1024**2
@@ -775,7 +775,7 @@ def test_llamacpp_estimate_brackets_measured_gpu_use(tmp_path):
                                       (1024, False, 27422), (128, True, 28378)):
         cfg = {"ctx_size": 262144, "cache_type_k": "q8_0", "cache_type_v": "q8_0",
                "flash_attn": "on", "ubatch_size": ubatch, "use_mtp": mtp}
-        needed = advisor.advise("llamacpp", model, cfg, DUAL_5060TI)["budget"]["needed_gb"]
+        needed = advisor.advise("llamacpp", model, cfg, DUAL_GPU_16GB)["budget"]["needed_gb"]
         assert measured_mib / 1024 <= needed <= measured_mib / 1024 + 1.8, (ubatch, mtp, needed)
 
 
@@ -784,7 +784,7 @@ def test_llamacpp_failed_load_is_not_called_a_fit(tmp_path):
     path = _write_gguf(tmp_path / "Qwen3.8-27B-NVFP4-MTP-MID-HIGH.gguf", QWEN35_27B_SSM)
     cfg = {"ctx_size": 262144, "cache_type_k": "q8_0", "cache_type_v": "q8_0",
            "flash_attn": "on", "ubatch_size": 512, "use_mtp": True}
-    a = advisor.advise("llamacpp", _gguf_file_model(path, 16912387392 / GB), cfg, DUAL_5060TI)
+    a = advisor.advise("llamacpp", _gguf_file_model(path, 16912387392 / GB), cfg, DUAL_GPU_16GB)
     assert a["overall"]["level"] == "red"
 
 
@@ -792,11 +792,11 @@ def test_llamacpp_near_full_warns_about_silent_cpu_offload(tmp_path):
     path = _write_gguf(tmp_path / "qwen.gguf", QWEN35_27B_SSM)
     cfg = {"ctx_size": 262144, "cache_type_k": "q8_0", "cache_type_v": "q8_0",
            "flash_attn": "on", "ubatch_size": 512}
-    tight = advisor.advise("llamacpp", _gguf_file_model(path, 16912387392 / GB), cfg, DUAL_5060TI)
+    tight = advisor.advise("llamacpp", _gguf_file_model(path, 16912387392 / GB), cfg, DUAL_GPU_16GB)
     assert tight["budget"]["pct"] > 0.9
     assert any("CPU" in d and "slower" in d for d in tight["overall"]["details"])
     roomy = advisor.advise("llamacpp", _gguf_file_model(path, 16912387392 / GB),
-                           {**cfg, "ctx_size": 32768}, DUAL_5060TI)
+                           {**cfg, "ctx_size": 32768}, DUAL_GPU_16GB)
     assert not any("CPU" in d for d in roomy["overall"]["details"])
 
 
@@ -805,30 +805,30 @@ def test_llamacpp_unset_parallel_means_llama_servers_own_four_slots(tmp_path):
     # 1 is then not what runs, so the estimate must not use it.
     path = _write_gguf(tmp_path / "qwen.gguf", QWEN35_27B_SSM)
     cfg = {"ctx_size": 65536, "cache_type_k": "q8_0", "cache_type_v": "q8_0", "flash_attn": "on"}
-    unset = advisor.advise("llamacpp", _gguf_file_model(path, 15.75), cfg, DUAL_5060TI)["budget"]
-    one = advisor.advise("llamacpp", _gguf_file_model(path, 15.75), {**cfg, "parallel": 1}, DUAL_5060TI)["budget"]
+    unset = advisor.advise("llamacpp", _gguf_file_model(path, 15.75), cfg, DUAL_GPU_16GB)["budget"]
+    one = advisor.advise("llamacpp", _gguf_file_model(path, 15.75), {**cfg, "parallel": 1}, DUAL_GPU_16GB)["budget"]
     assert unset["recurrent_state_gb"] == 0.6
     assert one["recurrent_state_gb"] == 0.1
 
 
 def test_llamacpp_lazy_mode_on_with_no_mmap_is_red():
-    a = advisor.advise("llamacpp", gguf_model(), {"lazy_mode": "on", "no_mmap": True}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", gguf_model(), {"lazy_mode": "on", "no_mmap": True}, DUAL_GPU_16GB)
     assert a["flags"]["lazy_mode"]["level"] == "red"
     assert a["overall"]["level"] == "red"
 
 
 def test_llamacpp_moe_cache_mib_without_cpu_moe_warns_yellow():
-    a = advisor.advise("llamacpp", gguf_model(), {"moe_cache_mib": 1024}, DUAL_5060TI)
+    a = advisor.advise("llamacpp", gguf_model(), {"moe_cache_mib": 1024}, DUAL_GPU_16GB)
     assert a["flags"]["moe_cache_mib"]["level"] == "yellow"
-    a_with_cpu_moe = advisor.advise("llamacpp", gguf_model(), {"moe_cache_mib": 1024, "n_cpu_moe": 4}, DUAL_5060TI)
+    a_with_cpu_moe = advisor.advise("llamacpp", gguf_model(), {"moe_cache_mib": 1024, "n_cpu_moe": 4}, DUAL_GPU_16GB)
     assert "moe_cache_mib" not in a_with_cpu_moe["flags"]
 
 
 def test_llamacpp_n_cpu_ffn_and_spec_draft_model_mark_custom_fit():
-    a_ffn = advisor.advise("llamacpp", gguf_model(), {"n_cpu_ffn": 4}, DUAL_5060TI)
+    a_ffn = advisor.advise("llamacpp", gguf_model(), {"n_cpu_ffn": 4}, DUAL_GPU_16GB)
     assert a_ffn["flags"]["n_cpu_ffn"]["level"] == "yellow"
     assert a_ffn["budget"]["fit_unknown"] is True
 
-    a_draft = advisor.advise("llamacpp", gguf_model(), {"spec_draft_model": "/models/draft.gguf"}, DUAL_5060TI)
+    a_draft = advisor.advise("llamacpp", gguf_model(), {"spec_draft_model": "/models/draft.gguf"}, DUAL_GPU_16GB)
     assert a_draft["flags"]["spec_draft_model"]["level"] == "yellow"
     assert a_draft["budget"]["fit_unknown"] is True

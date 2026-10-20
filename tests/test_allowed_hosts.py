@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from local_llm_launcher.app import create_app
 
-TAILNET = "gpuhost.tail048ee2.ts.net"
+TAILNET = "launcher.example.ts.net"
 
 
 def _status(app, host):

@@ -46,8 +46,8 @@ where code is adapted.
 - Detect: NVIDIA GPUs (name, VRAM total/free, compute capability via nvidia-smi),
   Apple Silicon (chip + unified memory), CPU cores, system RAM, free disk space,
   vLLM availability (native/docker), llama.cpp availability.
-- Plain-English summary, e.g. "2× RTX 5060 Ti (16 GB each, 32 GB total). Good for
-  models up to ~35B at 4-bit."
+- Plain-English summary showing the detected GPU count and available memory.
+  Explain model fit from its actual format, settings and current free memory.
 
 ### 2. Model library
 - Discover installed models: HuggingFace cache (safetensors repos) and GGUF files

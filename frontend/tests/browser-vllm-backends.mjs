@@ -20,7 +20,7 @@ try {
     window.fetch = async (path, options) => {
       if (path === '/api/hardware') {
         const hw = await (await original(path, options)).json();
-        return Response.json({...hw, gpus:[{index:0,name:'RTX 5060 Ti',compute_capability:'12.0',vram_total_mb:16384,vram_free_mb:15000}],
+        return Response.json({...hw, gpus:[{index:0,name:'Example GPU',compute_capability:'12.0',vram_total_mb:16384,vram_free_mb:15000}],
           engines:{...hw.engines,vllm_native:true,vllm_docker:true}});
       }
       if (path === '/api/models') return Response.json({models:[model]});
