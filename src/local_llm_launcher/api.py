@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import threading
 import time
 import uuid
@@ -268,7 +269,7 @@ def api_launch(body: LaunchRequest):
                              vllm_binary=settings.data.get("vllm_path"), hardware=hw)
     except (RuntimeError, ValueError) as e:
         raise HTTPException(400, str(e))
-    return srv.status()
+    return _remember_launch(srv.status())
 
 
 class FavoriteRequest(BaseModel):
@@ -294,9 +295,17 @@ def api_archive_favorite(favorite_id: str):
 @router.get("/previous-launch")
 def api_previous_launch(repo_id: str):
     previous = [s for s in servers.list() if s["model"] == repo_id]
+    previous += [s for s in settings.data["last_launches"] if s["model"] == repo_id]
     if not previous:
         return {"previous": None}
-    status = _enrich(max(previous, key=lambda s: s.get("started_at") or ""))
+    status = max(previous, key=lambda s: s.get("started_at") or "")
+    srv = servers.get(status["id"])
+    if srv is not None:
+        status = _enrich(srv.status())
+    else:
+        status = {**status, "running": False}
+        if status.get("load_status") == "loading":
+            status["load_status"] = "unknown"
     return {"previous": {key: status.get(key) for key in (
         "id", "engine", "model", "config", "config_save_error", "load_status",
         "started_at", "running", "healthy", "exit_code", "failure_explanation")}}
@@ -369,6 +378,17 @@ def api_benchmark(server_id: str):
     return record
 
 
+def _remember_launch(status: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        settings.remember_launch(status)
+    except OSError:
+        # The process may already be running: a metadata write failure must not
+        # masquerade as a failed launch and invite a duplicate start.
+        logging.getLogger(__name__).warning("Could not retain the previous launch settings.")
+        status["history_save_error"] = "Launch settings could not be retained. Check free disk space and settings permissions."
+    return status
+
+
 def _enrich(status: Dict[str, Any]) -> Dict[str, Any]:
     srv = servers.get(status["id"])
     if srv is None:
@@ -384,7 +404,7 @@ def _enrich(status: Dict[str, Any]) -> Dict[str, Any]:
         if srv.load_status == "loading" or (srv.load_status == "unknown" and friendly):
             servers.record_load_status(status["id"], "failed")
     status["load_status"] = srv.load_status
-    return status
+    return _remember_launch(status)
 
 
 @router.get("/servers/{server_id}")
@@ -414,6 +434,11 @@ def api_server_stop(server_id: str):
 
 @router.delete("/servers/{server_id}")
 def api_server_remove(server_id: str):
+    srv = servers.get(server_id)
+    if srv is None:
+        raise HTTPException(404, "No such server.")
+    if _enrich(srv.status()).get("history_save_error"):
+        raise HTTPException(500, "Could not retain these launch settings. The server record has not been removed.")
     if not servers.remove(server_id):
         if servers.get(server_id) is not None:
             raise HTTPException(409, "The server didn't stop; its record and logs were retained. Check its log for errors.")

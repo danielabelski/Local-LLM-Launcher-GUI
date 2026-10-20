@@ -23,6 +23,7 @@ export default function Favorites({ onLaunched, onEdit, notify }) {
     try {
       const server = await api.launchFavorite(favorite.id)
       notify(`Launching “${favorite.name}”.`)
+      if (server.history_save_error) notify(server.history_save_error, true)
       await onLaunched(server)
     } catch (err) {
       notify(err.message, true)

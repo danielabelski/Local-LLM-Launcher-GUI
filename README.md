@@ -327,7 +327,7 @@ MIT — see [LICENSE](LICENSE). Portions adapted from
   (normally `~/.local-llm-launcher/`). The confirmation shows the exact path
   on the computer running the launcher.
 - **Launch → Reload previous settings** restores the latest retained launch
-  configuration for that model. The note below it reports the observed load
+  configuration for that model, even after its server entry is removed. The note below it reports the observed load
   outcome. Older records without an observed outcome are marked unavailable.
   Settings are restored only when requested, and the current hardware advice
   is recalculated before launch.

@@ -19,6 +19,7 @@ DEFAULTS: Dict[str, Any] = {
     "lan_access": False,
     "favorites": [],
     "benchmarks": [],
+    "last_launches": [],
 }
 
 
@@ -73,6 +74,17 @@ class Settings:
     @property
     def favorites_archive(self) -> Path:
         return self.app_dir / "favorites-archive.json"
+
+    def remember_launch(self, status: Dict[str, Any]) -> None:
+        """Retain one sanitized configuration per model even if its server is removed."""
+        keys = ("id", "engine", "model", "config", "config_save_error", "load_status",
+                "started_at", "failure_explanation")
+        record = {key: status.get(key) for key in keys}
+        with self._lock:
+            previous = next((s for s in self.data["last_launches"] if s["model"] == record["model"]), None)
+            if previous == record or (previous and (previous.get("started_at") or "") > (record.get("started_at") or "")):
+                return
+            self.update({"last_launches": [s for s in self.data["last_launches"] if s["model"] != record["model"]] + [record]})
 
     def archive_favorite(self, favorite_id: str) -> None:
         """Write the recovery copy before removing a favorite from active settings."""

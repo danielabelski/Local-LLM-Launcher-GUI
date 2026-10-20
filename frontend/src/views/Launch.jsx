@@ -231,8 +231,9 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   const launch = async () => {
     setLaunching(true)
     try {
-      await api.launch(engineMode, model.repo_id, config)
+      const server = await api.launch(engineMode, model.repo_id, config)
       notify(`Launching ${model.repo_id}. Big models can take 10-15 minutes to load — silence in the log is normal.`)
+      if (server.history_save_error) notify(server.history_save_error, true)
       onLaunched()
     } catch (err) {
       notify(err.message, true)

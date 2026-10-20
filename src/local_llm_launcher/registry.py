@@ -184,6 +184,9 @@ class ServerManager:
                     ok = True
                 else:
                     ok = srv.stop()
+                if ok and not srv.is_running() and srv.load_status == "loading":
+                    # Explicit cancellation does not prove a failed model load.
+                    srv.load_status = "unknown"
                 if remove:
                     ok = ok and not srv.is_running()
                     if ok:

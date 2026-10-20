@@ -8,7 +8,8 @@
 - Add **Archive** with confirmation, the exact recovery-file location, and one
   private file containing archived favorites (#30, #32).
 - Add **Reload previous settings** with the observed outcome of the retained
-  model launch; preserve observed successful/failed outcomes across restarts (#31).
+  model launch; preserve settings after removing a server and observed
+  successful/failed outcomes across restarts (#31).
 - Use bright green, yellow and red status badges and larger checkmark indicators
   in light and dark themes.
 - Replace machine-specific examples and inference-run anecdotes with general
