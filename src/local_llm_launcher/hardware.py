@@ -291,7 +291,7 @@ def detect_numa(online=None, status=None) -> Dict[str, Any]:
 @lru_cache(maxsize=16)
 def _llama_capabilities_cached(binary: str, mtime: int) -> Dict[str, Any]:
     import re
-    result = {'load_mode': False, 'devices': [], 'mtp': None, 'build': None}
+    result = {'load_mode': False, 'devices': [], 'mtp': None, 'build': None, 'server_options': {}}
     env = dict(os.environ)
     directory = os.path.dirname(binary)
     if directory:
@@ -304,6 +304,9 @@ def _llama_capabilities_cached(binary: str, mtime: int) -> Dict[str, Any]:
             output = out.stdout + '\n' + out.stderr
             if option == '--help':
                 result['load_mode'] = bool(re.search(r'(?<![\w-])--load-mode(?=\s|=|$)', output))
+                for key in ('system_prompt', 'system_prompt_file', 'color'):
+                    flag = '--' + key.replace('_', '-')
+                    result['server_options'][key] = bool(re.search(r'(?<![\w-])' + re.escape(flag) + r'(?=\s|=|$)', output))
                 # MTP is one value of --spec-type's list (build 9180+).
                 result['mtp'] = bool(re.search(r'(?<![\w-])--spec-type\s+\S*(?<![\w-])draft-mtp(?![\w-])', output))
             elif option == '--version':

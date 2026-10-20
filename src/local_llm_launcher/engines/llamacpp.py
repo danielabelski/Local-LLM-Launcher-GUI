@@ -29,10 +29,29 @@ def pick_gguf_path(model: Dict[str, Any], config: Dict[str, Any]) -> str:
     return model["path"]
 
 
+def unsupported_server_options(config: Dict[str, Any], binary: str) -> Dict[str, str]:
+    selected = [key for key in ('system_prompt', 'system_prompt_file', 'color')
+                if config.get(key) not in (None, '')]
+    if not selected:
+        return {}
+    support = hardware.llama_capabilities(binary).get('server_options', {})
+    messages = {}
+    for key in selected:
+        if support.get(key) is False:
+            message = f"The selected llama-server does not accept --{key.replace('_', '-')}. Leave this launch setting empty."
+            if key.startswith('system_prompt'):
+                message += ' Set system instructions in your chat client.'
+            messages[key] = message
+    return messages
+
+
 def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "llama-server") -> Dict[str, Any]:
     if "context_shift" in config and "ctx_shift" not in config:
         config = {**config, "ctx_shift": config["context_shift"]}
     validate('llamacpp', config)
+    unsupported = unsupported_server_options(config, binary)
+    if unsupported:
+        raise ValueError(' '.join(unsupported.values()))
     if config.get("cuda_allreduce") not in (None, "nccl", "internal"):
         raise ValueError("CUDA AllReduce must be automatic, nccl, or internal")
     cfg = {k: v for k, v in config.items() if k not in ("gguf_file", "host", "context_shift")}

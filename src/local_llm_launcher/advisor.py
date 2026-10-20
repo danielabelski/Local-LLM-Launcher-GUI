@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from . import catalog
 from .discovery import encoder_weight_bytes
-from .engines.llamacpp import pick_gguf_path
+from .engines.llamacpp import pick_gguf_path, unsupported_server_options
 from .engines.mtp import _gguf, is_head
 from .engines.placement import parse_device_ids, validate
 
@@ -670,6 +670,10 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
     if engine == "vllm":
         budget = _advise_vllm(model, cfg, hw, rep)
     elif engine == "llamacpp":
+        binary = hw.get("engines", {}).get("llamacpp_path") or "llama-server"
+        for key, message in unsupported_server_options(config, binary).items():
+            rep.flag(key, RED, message)
+            rep.blockers.append(message)
         budget = _advise_llamacpp(model, cfg, hw, rep)
     else:
         raise ValueError(f"Unknown engine '{engine}'")

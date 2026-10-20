@@ -12,6 +12,8 @@
   successful/failed outcomes across restarts (#31).
 - Use bright green, yellow and red status badges and larger checkmark indicators
   in light and dark themes.
+- Check the selected llama-server's support for prompt and terminal-color
+  options before launch, retaining the original saved values.
 - Replace machine-specific examples and inference-run anecdotes with general
   hardware and engine guidance.
 
