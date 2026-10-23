@@ -6,6 +6,8 @@ and LocalModel.to_dict()) so it is easy to call from the API layer.
 import json
 import struct
 
+import pytest
+
 from local_llm_launcher import advisor
 
 GB = 1024**3
@@ -505,6 +507,22 @@ def test_sglang_huge_model_red():
     assert a["overall"]["level"] == "red"
 
 
+@pytest.mark.parametrize("kv_cache_dtype", ["fp8_e5m2", "fp8_e4m3"])
+def test_sglang_fp8_cache_crosses_fit_boundary(kv_cache_dtype):
+    hw = {**DUAL_GPU_16GB, "gpus": [{
+        **DUAL_GPU_16GB["gpus"][0], "vram_total_mb": 16384, "vram_free_mb": 16000,
+    }]}
+    model = safetensors_model(size_gb=10.4, params=7.0, quant=None)
+    config = {"context_length": 8192, "mem_fraction_static": 0.88,
+              "max_running_requests": 2}
+    default = advisor.advise("sglang", model, config, hw)
+    fp8 = advisor.advise("sglang", model, {**config, "kv_cache_dtype": kv_cache_dtype}, hw)
+
+    assert default["overall"]["level"] == "red"
+    assert fp8["overall"]["level"] == "yellow"
+    assert fp8["budget"]["kv_cache_gb"] == pytest.approx(default["budget"]["kv_cache_gb"] / 2)
+
+
 def test_sglang_gguf_is_red():
     a = advisor.advise("sglang", gguf_model(), {"tensor_parallel_size": 1}, DUAL_5060TI)
     assert a["overall"]["level"] == "red"
@@ -591,6 +609,33 @@ def test_tgi_fit_advice_blocks_gguf_and_invalid_context():
                             {"max_input_tokens": 4096, "max_total_tokens": 4096}, DUAL_GPU_16GB)
     assert advice["flags"]["max_input_tokens"]["level"] == "red"
     assert advice["overall"].get("override") is not True
+
+
+def test_tgi_fit_uses_selected_gpu_free_memory():
+    hw = {**DUAL_GPU_16GB, "gpus": [
+        {**DUAL_GPU_16GB["gpus"][0], "vram_free_mb": 1000},
+        {**DUAL_GPU_16GB["gpus"][1], "vram_free_mb": 8000},
+    ]}
+    advice = advisor.advise("tgi", safetensors_model(size_gb=2, params=2),
+                            {"device_ids": "1", "num_shard": 1, "cuda_memory_fraction": 0.9}, hw)
+    assert advice["budget"]["available_gb"] == round(8000 / 1024, 1)
+
+
+@pytest.mark.parametrize("kv_cache_dtype", ["fp8_e4m3fn", "fp8_e5m2"])
+def test_tgi_fp8_cache_crosses_fit_boundary(kv_cache_dtype):
+    hw = {**DUAL_GPU_16GB, "gpus": [{
+        **DUAL_GPU_16GB["gpus"][0], "vram_total_mb": 16384, "vram_free_mb": 16000,
+    }]}
+    model = safetensors_model(size_gb=10.4, params=7.0, quant=None)
+    config = {"max_total_tokens": 8192, "cuda_memory_fraction": 0.9}
+    default = advisor.advise("tgi", model, config, hw)
+    fp8 = advisor.advise("tgi", model, {**config, "kv_cache_dtype": kv_cache_dtype}, hw)
+
+    assert default["overall"]["level"] == "red"
+    assert fp8["overall"]["level"] == "yellow"
+    assert fp8["budget"]["kv_cache_gb"] == pytest.approx(default["budget"]["kv_cache_gb"] / 2)
+
+
 def test_selected_gpus_follow_inherited_mask_when_device_ids_unset():
     gpus = [{"index": 0, "vram_total_mb": 8000}, {"index": 1, "vram_total_mb": 16000}]
     hw = {"gpus": gpus, "cuda_visible_devices": "1"}

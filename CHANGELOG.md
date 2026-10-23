@@ -7,9 +7,15 @@
   executable choice, and multimodal setting guidance.
 - Add Hugging Face TGI v3.3.7 as a Docker engine, with setup guidance and
   conservative fit estimates. TGI is archived upstream.
+- Support Podman's Docker command wrapper for TGI GPU selection, and require
+  the exact launch image tag when detecting its availability. Clean temporary
+  token files after failed container exits and support multiple selected GPUs.
 - Show installed llama.cpp, vLLM, SGLang and Docker engine versions beside
   cached latest GitHub release versions on the Dashboard.
 - Expose llama.cpp prompt chunk reuse and vLLM CPU KV cache offloading.
+- Keep SGLang API keys out of launcher controls because v0.5.22 logs its
+  server arguments. Correct its quantization choices and align model fit
+  recommendations with the Launch default.
 
 ## 2026-10-20 — v0.5.7
 

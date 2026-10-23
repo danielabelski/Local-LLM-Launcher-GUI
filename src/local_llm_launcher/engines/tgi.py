@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import uuid
 from typing import Any, Dict
@@ -11,6 +12,16 @@ from .placement import normalize_device_ids, validate
 
 IMAGE = "ghcr.io/huggingface/text-generation-inference:3.3.7"
 HF_CACHE = os.path.expanduser("~/.cache/huggingface")
+
+
+def _uses_podman() -> bool:
+    """The Docker command may be Podman's compatibility wrapper."""
+    try:
+        result = subprocess.run(["docker", "--version"], capture_output=True,
+                                text=True, timeout=3)
+        return result.returncode == 0 and "podman" in result.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _secret_file(values: Dict[str, str]) -> str | None:
@@ -40,11 +51,15 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     host_port = int(config.get("port", 8082))
     host = str(config.get("host") or "127.0.0.1").strip()
     devices = normalize_device_ids(config.get("device_ids"))
-    gpu_request = f'"device={devices}"' if devices is not None else "all"
+    if _uses_podman():
+        gpu_flags = [part for device in (devices.split(",") if devices else ["all"])
+                     for part in ("--device", f"nvidia.com/gpu={device}")]
+    else:
+        gpu_flags = ["--gpus", f'"device={devices}"' if devices is not None else "all"]
     env_file = _secret_file(secret_env)
     name = f"llml-tgi-{uuid.uuid4().hex[:8]}"
     argv = ["docker", "run", "--rm", "--name", name,
-            "--gpus", gpu_request, "--shm-size", "1g",
+            *gpu_flags, "--shm-size", "1g",
             "-p", f"{host}:{host_port}:80",
             "-v", f"{HF_CACHE}:/data"]
     if os.path.exists("/dev/nvidia-uvm"):

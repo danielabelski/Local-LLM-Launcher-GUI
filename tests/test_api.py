@@ -29,11 +29,27 @@ def test_models_list(client):
     assert r.status_code == 200
     for m in r.json()["models"]:
         assert m["fit"] in ("green", "yellow", "red")
-        assert m["recommended_engine"] in ("vllm-native", "vllm-docker", "llamacpp", "sglang")
+        assert m["recommended_engine"] in ("vllm-native", "vllm-docker", "llamacpp", "sglang", "tgi")
+
+
+def test_recommended_engine_matches_launch_default_priority():
+    from local_llm_launcher.api import recommended_engine
+
+    model = {"format": "safetensors"}
+    hw = {"gpus": [{"index": 0}], "apple_silicon": None,
+          "engines": {"vllm_native": True, "vllm_docker": True,
+                      "sglang": True, "tgi": True}}
+    assert recommended_engine(model, hw) == "vllm-native"
+    hw["engines"]["vllm_native"] = False
+    assert recommended_engine(model, hw) == "vllm-docker"
+    hw["engines"]["vllm_docker"] = False
+    assert recommended_engine(model, hw) == "sglang"
+    hw["engines"]["sglang"] = False
+    assert recommended_engine(model, hw) == "tgi"
 
 
 def test_catalog_routes(client):
-    for engine in ("vllm", "llamacpp", "sglang"):
+    for engine in ("vllm", "llamacpp", "sglang", "tgi"):
         r = client.get(f"/api/catalog/{engine}")
         assert r.status_code == 200
         assert len(r.json()["flags"]) > 5

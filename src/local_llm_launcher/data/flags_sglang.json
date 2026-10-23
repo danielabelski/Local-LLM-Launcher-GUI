@@ -74,7 +74,7 @@
       "label": "Quantization override",
       "type": "choice",
       "default": null,
-      "choices": [null, "awq", "fp8", "gptq", "marlin", "gptq_marlin", "awq_marlin", "bitsandbytes", "gguf", "w8a8_int8", "w8a8_fp8", "compressed-tensors"],
+      "choices": [null, "awq", "fp8", "gptq", "gptq_marlin", "awq_marlin", "bitsandbytes", "gguf", "w8a8_int8", "w8a8_fp8", "compressed-tensors"],
       "category": "advanced",
       "advanced": true,
       "help": "Forces a specific compression format instead of letting SGLang read it from the model files. Almost always leave this empty — SGLang auto-detects, and a wrong value makes the launch fail."
@@ -203,15 +203,6 @@
       "default": null,
       "category": "api",
       "help": "A friendly name apps will see instead of the long repository path. Optional."
-    },
-    {
-      "key": "api_key",
-      "flag": "--api-key",
-      "label": "API key (password)",
-      "type": "string",
-      "default": null,
-      "category": "api",
-      "help": "If set, apps must send this key to use the server. Recommended if other devices on your network can reach this computer."
     },
     {
       "key": "device_ids",

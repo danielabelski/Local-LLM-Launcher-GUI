@@ -1,4 +1,5 @@
 """Tests for the server manager and its persistence."""
+import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -125,6 +126,24 @@ def test_remove_dead_server(tmp_path, monkeypatch):
     assert not srv.is_running()
     assert mgr.remove(srv.server_id)
     assert mgr.list() == []
+
+
+def test_reload_removes_token_file_for_dead_server(tmp_path):
+    from local_llm_launcher.engines.base import LocalServer
+
+    token_file = tmp_path / "launch.env"
+    token_file.write_text("HF_TOKEN=hf_example\n")
+    srv = LocalServer(
+        server_id="dead-tgi", engine="tgi", model_label="test/model", port=8082,
+        argv=["docker", "run"], env={}, log_dir=tmp_path / "logs",
+        pid=None, started_at="2026-10-22T00:00:00+00:00", env_file=str(token_file),
+    )
+    (tmp_path / "servers.json").write_text(json.dumps([srv.to_record()]))
+
+    restored = ServerManager(app_dir=tmp_path).get("dead-tgi")
+    assert restored is not None
+    assert not token_file.exists()
+    assert restored.env_file is None
 
 
 def test_failed_launch_keeps_record_and_log(tmp_path, monkeypatch):

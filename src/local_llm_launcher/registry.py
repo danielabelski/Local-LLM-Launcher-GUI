@@ -72,6 +72,9 @@ class ServerManager:
                 srv = LocalServer.from_record(rec, self.log_dir)
             except (KeyError, TypeError):
                 continue
+            # A launcher crash may have left a token env file behind. Recheck
+            # persisted processes before serving their saved status.
+            srv.is_running()
             # Keep recently-dead servers too so their logs/errors stay visible.
             self.servers[srv.server_id] = srv
 

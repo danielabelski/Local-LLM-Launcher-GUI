@@ -12,8 +12,11 @@ cmake --build build --config Release -j
 brew install llama.cpp`,
 }
 
-const SGLANG_INSTALL = `# Install SGLang (requires Python 3.10+ and an NVIDIA GPU):
+const SGLANG_INSTALL = `# Install SGLang (requires Python 3.11+ and an NVIDIA GPU):
 pip install 'sglang==0.5.22'
+
+# On Linux, SGLang's first GPU launch may also need a matching CUDA toolkit,
+# a C++ compiler, and Ninja for JIT kernels.
 
 # Or with uv (faster):
 pip install uv

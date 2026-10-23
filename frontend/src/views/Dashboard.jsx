@@ -95,7 +95,8 @@ export default function Dashboard({ hardware, servers, goLaunch, setTab, notify 
     let active = true
     api.engineVersions().then((result) => { if (active) setVersions(result) }).catch(() => {})
     return () => { active = false }
-  }, [hardware?.engines?.llamacpp_path, hardware?.engines?.vllm_native])
+  }, [hardware?.engines?.llamacpp_path, hardware?.engines?.vllm_native,
+      hardware?.engines?.vllm_docker, hardware?.engines?.sglang, hardware?.engines?.tgi])
   const versionName = (name, key, available) => {
     if (!available) return name
     const version = versions?.[key]

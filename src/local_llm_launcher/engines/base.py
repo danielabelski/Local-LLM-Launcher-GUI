@@ -143,6 +143,7 @@ class LocalServer:
         if self.env_file:
             try:
                 self.env_file.unlink(missing_ok=True)
+                self.env_file = None
             except OSError:
                 pass
 
@@ -150,16 +151,21 @@ class LocalServer:
 
     def is_running(self) -> bool:
         if self.process is not None:
-            return self.process.poll() is None
-        if self.pid:
+            running = self.process.poll() is None
+        elif self.pid:
             if self.pid_create_time is not None and not self._pid_matches():
-                return False  # pid recycled by an unrelated process
-            try:
-                os.kill(self.pid, 0)
-                return True
-            except (ProcessLookupError, PermissionError, OSError):
-                return False
-        return False
+                running = False  # pid recycled by an unrelated process
+            else:
+                try:
+                    os.kill(self.pid, 0)
+                    running = True
+                except (ProcessLookupError, PermissionError, OSError):
+                    running = False
+        else:
+            running = False
+        if not running and self.started_at:
+            self._cleanup_env_file()
+        return running
 
     def _pid_matches(self) -> bool:
         """True only when the live process at self.pid has our stored start time."""

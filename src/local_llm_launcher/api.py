@@ -64,12 +64,12 @@ def recommended_engine(model: Dict[str, Any], hw: Dict[str, Any]) -> str:
         return "llamacpp"
     if hw.get("apple_silicon") or not hw.get("gpus"):
         return "llamacpp"
-    if hw["engines"].get("sglang"):
-        return "sglang"
     if hw["engines"].get("vllm_native"):
         return "vllm-native"
     if hw["engines"].get("vllm_docker"):
         return "vllm-docker"
+    if hw["engines"].get("sglang"):
+        return "sglang"
     if hw["engines"].get("tgi"):
         return "tgi"
     return "vllm-native"

@@ -862,7 +862,8 @@ def _advise_tgi(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, Any], 
         rep.blockers.append("TGI requires maximum input tokens below maximum total tokens.")
     fraction = float(cfg.get("cuda_memory_fraction") or 1.0)
     selected = gpus[:shards]
-    capacity = sum(g["vram_total_mb"] for g in selected) / 1024 * fraction
+    capacity = sum(min(g["vram_total_mb"] * fraction, g["vram_free_mb"])
+                   for g in selected) / 1024
     kv_bytes = 1.0 if cfg.get("kv_cache_dtype") else 2.0
     kv = estimate_kv_gb(model.get("config") or {}, model.get("param_count_b"), context,
                         seqs=1, dtype_bytes=kv_bytes)

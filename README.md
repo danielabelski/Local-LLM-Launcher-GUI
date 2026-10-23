@@ -59,11 +59,13 @@ the error into something you can actually act on.
      Docker image.
    - **[SGLang](https://github.com/sgl-project/sglang)** — high-performance
      serving with RadixAttention prefix caching and structured generation.
-     Great for agents and repeated prompts. Install with `pip install sglang==0.5.22`
-     in the same Python environment as the launcher.
+     Great for agents and repeated prompts. Version 0.5.22 requires Python 3.11
+     or newer; install it in the same Python environment as the launcher. On
+     Linux, first GPU launch may also need a matching CUDA toolkit, a C++
+     compiler, and Ninja for JIT kernels.
    - **[Hugging Face TGI](https://github.com/huggingface/text-generation-inference)** —
      an archived inference server for Hugging Face models. Requires Docker and
-     an NVIDIA GPU. Pull its final image with
+     an NVIDIA GPU (Podman's Docker command wrapper also works). Pull its final image with
      `docker pull ghcr.io/huggingface/text-generation-inference:3.3.7`.
 
    Don't worry too much about choosing — the app detects what you have
@@ -317,6 +319,16 @@ the **Extra raw flags** field:
 
 This selects Triton attention and PyTorch sampling. It may avoid the JIT path
 that failed in older versions; compare speed and inspect the log after launch.
+
+SGLang v0.5.22 still compiles CUDA kernels on first launch. If its log says
+`Failed to find C compiler`, `No such file or directory: 'ninja'`, or
+`cannot find -lcudart`, install matching CUDA development files and C++/Ninja
+build tools, then set `CUDA_HOME` to the toolkit directory before starting the
+launcher. CUDA runtime libraries alone are insufficient for this JIT step.
+
+SGLang v0.5.22 prints its server arguments to its log, including `--api-key`.
+The launcher therefore rejects SGLang API keys; keep its endpoint on localhost
+or protect LAN access with an external authenticated proxy.
 
 ### SGLang fails to install (dependency conflict)
 
