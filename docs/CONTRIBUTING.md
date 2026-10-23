@@ -47,9 +47,9 @@ If you do open a PR with AI-assisted code, that's great — just make sure:
   Silicon variants), different OS — even just "I ran this on X and it worked
   / the numbers were off by Y" helps tune the memory-budget constants in
   `advisor.py`.
-- **Flag catalog gaps.** Missing a flag you need? `data/flags_vllm.json` and
-  `data/flags_llamacpp.json` are plain JSON — add an entry with a `label`,
-  `help` (plain English!), `type`, `category`, and `cli_flag`.
+- **Flag catalog gaps.** Missing a flag you need? The engine catalogs in
+  `src/local_llm_launcher/data/flags_*.json` are plain JSON — add an entry
+  with a `label`, `help` (plain English!), `type`, `category`, and `cli_flag`.
 
 ## Ways to contribute (code)
 
@@ -87,7 +87,7 @@ cd frontend && npm run build    # frontend must build cleanly
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map. The short
 version:
 
-- **New vLLM/llama.cpp flag?** → `src/local_llm_launcher/data/flags_*.json`
+- **New engine flag?** → `src/local_llm_launcher/data/flags_*.json`
 - **New advisor rule?** → `src/local_llm_launcher/advisor.py` (and a test in
   `tests/test_advisor.py` — this file has the most test coverage for a
   reason)

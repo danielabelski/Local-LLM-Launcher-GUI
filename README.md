@@ -34,7 +34,7 @@ the error into something you can actually act on.
 
 > **Experimental branch:** SGLang and TGI support live on
 > [`experimental/sglang-integration`](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/tree/experimental/sglang-integration).
-> The branch follows launcher v0.5.7. SGLang options were checked against
+> The branch is launcher v0.6.0. SGLang options were checked against
 > v0.5.22, but a live model run still depends on your GPU and installed packages.
 > Hugging Face archived TGI in March 2026; its final release is v3.3.7.
 
