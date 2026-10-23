@@ -48,6 +48,27 @@ def test_recommended_engine_matches_launch_default_priority():
     assert recommended_engine(model, hw) == "tgi"
 
 
+def test_model_fit_badge_uses_default_engine_when_engine_advice_differs(client, monkeypatch):
+    import local_llm_launcher.api as api
+
+    model = {"repo_id": "test/model", "format": "safetensors"}
+    hardware = {"gpus": [{"index": 0}], "apple_silicon": None,
+                "engines": {"vllm_native": True, "sglang": True}}
+    monkeypatch.setattr(api, "installed_models", lambda: [model])
+    monkeypatch.setattr(api, "get_hardware", lambda: hardware)
+    monkeypatch.setattr(api.advisor, "presets", lambda engine, model, hw: [{"config": {}}])
+    monkeypatch.setattr(api.advisor, "advise", lambda engine, model, config, hw: {
+        "overall": {"level": "red" if engine == "vllm" else "green",
+                    "headline": f"{engine} fit"},
+    })
+
+    badge = client.get("/api/models").json()["models"][0]
+    assert (badge["recommended_engine"], badge["fit"]) == ("vllm-native", "red")
+    hardware["engines"]["vllm_native"] = False
+    badge = client.get("/api/models").json()["models"][0]
+    assert (badge["recommended_engine"], badge["fit"]) == ("sglang", "green")
+
+
 def test_catalog_routes(client):
     for engine in ("vllm", "llamacpp", "sglang", "tgi"):
         r = client.get(f"/api/catalog/{engine}")

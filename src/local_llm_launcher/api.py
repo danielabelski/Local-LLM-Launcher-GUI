@@ -151,8 +151,8 @@ def api_models():
             adv_engine = "tgi"
         else:
             adv_engine = "vllm"
-        # The badge answers "can this run on my hardware at all?" — so report the
-        # best outcome across presets, not just the conservative default.
+        # Rate the engine Launch selects by default, using its best preset so a
+        # conservative preset does not hide a configuration that fits.
         best = None
         for preset in advisor.presets(adv_engine, m, hw):
             advice = advisor.advise(adv_engine, m, preset["config"], hw)
