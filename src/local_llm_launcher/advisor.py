@@ -375,6 +375,9 @@ def _advise_vllm(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, Any],
                  "This makes an oversized model run, but roughly 10x slower — the offloaded part is "
                  "re-sent over the PCIe slot on every word generated. Prefer a smaller or more "
                  "compressed model if one exists.")
+    if cfg.get("kv_offloading_size"):
+        rep.flag("kv_offloading_size", YELLOW,
+                 "Moving old conversation memory to system RAM may allow a longer chat, but responses slow down. The fit estimate below does not credit the offloaded cache.")
 
     # enforce eager
     if cfg.get("enforce_eager"):
@@ -678,7 +681,7 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
     else:
         raise ValueError(f"Unknown engine '{engine}'")
 
-    custom = bool(config.get("extra_args")) or (engine == "llamacpp" and (
+    custom = bool(config.get("extra_args")) or (engine == "vllm" and bool(config.get("kv_offloading_size"))) or (engine == "llamacpp" and (
         any(config.get(k) is not None for k in ("device", "tensor_split", "main_gpu"))
         or config.get("split_mode") in ("none", "row", "tensor")
         or config.get("cpu_moe") or (config.get("n_cpu_moe") or 0) > 0

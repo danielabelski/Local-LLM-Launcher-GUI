@@ -89,6 +89,20 @@ function EngineRow({ ok, name, note }) {
 }
 
 export default function Dashboard({ hardware, servers, goLaunch, setTab, notify }) {
+  const [versions, setVersions] = useState(null)
+  useEffect(() => {
+    if (!hardware) return
+    let active = true
+    api.engineVersions().then((result) => { if (active) setVersions(result) }).catch(() => {})
+    return () => { active = false }
+  }, [hardware?.engines?.llamacpp_path, hardware?.engines?.vllm_native])
+  const versionName = (name, key, available) => {
+    if (!available) return name
+    const version = versions?.[key]
+    if (!version) return name
+    const installed = version.installed || 'version unknown'
+    return `${name} ${installed}${version.latest ? ` (latest ${version.latest})` : ''}`
+  }
   const running = servers.filter((s) => s.running)
 
   const gpu0 = hardware?.gpus?.[0]
@@ -190,11 +204,11 @@ export default function Dashboard({ hardware, servers, goLaunch, setTab, notify 
           </div>
           {hardware ? (
             <>
-              <EngineRow ok={hardware.engines.vllm_native} name="vLLM"
+              <EngineRow ok={hardware.engines.vllm_native} name={versionName('vLLM', 'vllm', hardware.engines.vllm_native)}
                 note={hardware.engines.vllm_native ? 'installed' : 'not installed'} />
-              <EngineRow ok={hardware.engines.vllm_docker} name="vLLM (Docker)"
+              <EngineRow ok={hardware.engines.vllm_docker} name={versionName('vLLM (Docker)', 'vllm_docker', hardware.engines.vllm_docker)}
                 note={hardware.engines.vllm_docker ? 'image found' : 'no Docker image'} />
-              <EngineRow ok={!!hardware.engines.llamacpp_path} name="llama.cpp"
+              <EngineRow ok={!!hardware.engines.llamacpp_path} name={versionName('llama.cpp', 'llamacpp', !!hardware.engines.llamacpp_path)}
                 note={hardware.engines.llamacpp_path || 'not found'} />
             </>
           ) : <p style={{ padding: 16, color: 'var(--ink-3)' }}>…</p>}

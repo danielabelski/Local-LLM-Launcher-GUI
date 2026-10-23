@@ -137,6 +137,17 @@
       "help": "How many requests llama.cpp works on at the same time (called slots). Left unchanged, llama.cpp opens 4 slots that share one context window. Set a number here and the context window is divided between them instead: 4 slots each get a quarter of it. Every slot also keeps a little memory of its own, so 1 uses the least."
     },
     {
+      "key": "cache_reuse",
+      "flag": "--cache-reuse",
+      "label": "Reuse repeated prompt chunks",
+      "type": "int",
+      "default": null,
+      "min": 1,
+      "max": 4096,
+      "category": "performance",
+      "help": "Minimum matching chunk size for reusing conversation memory when prompts share text. Try 256 or 512 for repeated long instructions or documents. Leave empty for normal prompt caching."
+    },
+    {
       "key": "mlock",
       "flag": "--mlock",
       "label": "Lock model in RAM",

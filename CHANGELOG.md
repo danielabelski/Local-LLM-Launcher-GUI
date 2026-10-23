@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Show installed llama.cpp and vLLM versions next to cached latest GitHub
+  release versions on the Dashboard, including locally installed Docker images.
+- Expose llama.cpp prompt chunk reuse and vLLM CPU KV cache offloading.
+
 ## 2026-10-20 — v0.5.7
 
 - Keep downloaded models visible when a newer cache revision contains metadata
