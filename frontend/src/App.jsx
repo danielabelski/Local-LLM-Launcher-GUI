@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
 import { Toast, TopBar, ThemeToggle } from './components.jsx'
 import Dashboard from './views/Dashboard.jsx'
@@ -6,21 +6,27 @@ import Models from './views/Models.jsx'
 import Launch from './views/Launch.jsx'
 import Servers from './views/Servers.jsx'
 import Settings from './views/Settings.jsx'
+import Favorites from './views/Favorites.jsx'
+import Benchmarks from './views/Benchmarks.jsx'
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: '■' },
   { id: 'models', label: 'Models', icon: '▶', badge: true },
   { id: 'launch', label: 'Launch', icon: '⚡' },
+  { id: 'favorites', label: 'Favorites', icon: '☆', submenu: true },
   { id: 'servers', label: 'Servers', icon: '⚙' },
+  { id: 'benchmarks', label: 'Benchmarks', icon: '▥' },
   { id: 'settings', label: 'Settings', icon: '✎' },
 ]
 
 const BREADCRUMBS = {
-  dashboard: ['Overview / ', <span key="s">System status</span>],
-  models: ['Library / ', <span key="s">Installed & search</span>],
-  launch: ['Launch / ', <span key="s">Configure & start</span>],
-  servers: ['Servers / ', <span key="s">Running instances</span>],
-  settings: ['Settings / ', <span key="s">Configuration</span>],
+  dashboard: 'Overview / System status',
+  models: 'Library / Installed & search',
+  launch: 'Launch / Configure & start',
+  favorites: 'Launch / Favorites',
+  servers: 'Servers / Running instances',
+  benchmarks: 'Benchmarks / Recorded performance',
+  settings: 'Settings / Configuration',
 }
 
 export default function App() {
@@ -29,6 +35,12 @@ export default function App() {
   const [servers, setServers] = useState([])
   const [toast, setToast] = useState(null)
   const [launchModel, setLaunchModel] = useState(null)
+  const [launchKey, setLaunchKey] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const [version, setVersion] = useState(null)
+  const [selectedServer, setSelectedServer] = useState(null)
+  const serversRequest = useRef(null)
+  const hardwareRequest = useRef(null)
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
 
   const toggleTheme = useCallback(() => {
@@ -44,33 +56,76 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
-  const notify = useCallback((message, error = false) => setToast({ message, error, at: Date.now() }), [])
-
-  const refreshServers = useCallback(async () => {
-    try {
-      const r = await api.servers()
-      setServers(r?.servers ?? [])
-    } catch {
-      setServers([])
-    }
+  useEffect(() => {
+    api.about().then(r => setVersion(r?.version ?? null)).catch(() => setVersion(null))
   }, [])
 
+  const notify = useCallback((message, error = false) => setToast({ message, error, at: Date.now() }), [])
+
+  const refreshServers = useCallback(() => {
+    if (serversRequest.current) return serversRequest.current
+    serversRequest.current = (async () => {
+      try {
+        const r = await api.servers()
+        setServers(r?.servers ?? [])
+        return true
+      } catch {
+        return false
+      } finally {
+        serversRequest.current = null
+      }
+    })()
+    return serversRequest.current
+  }, [])
+
+  const refreshHardware = useCallback(() => {
+    if (hardwareRequest.current) return hardwareRequest.current
+    hardwareRequest.current = (async () => {
+      try {
+        setHardware(await api.hardware())
+        return true
+      } catch {
+        return false
+      } finally {
+        hardwareRequest.current = null
+      }
+    })()
+    return hardwareRequest.current
+  }, [])
+
+  const refresh = async () => {
+    setRefreshing(true)
+    try {
+      const results = await Promise.all([refreshHardware(), refreshServers()])
+      const ok = results.every(Boolean)
+      notify(ok ? 'Hardware and server status refreshed.' : 'Refresh failed. Check the launcher connection.', !ok)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => {
-    api.hardware().then(setHardware).catch(() => setHardware(null))
+    refreshHardware()
     refreshServers()
     const t = setInterval(refreshServers, 3000)
-    return () => clearInterval(t)
-  }, [refreshServers])
+    const hw = setInterval(refreshHardware, 6000)
+    return () => { clearInterval(t); clearInterval(hw) }
+  }, [refreshServers, refreshHardware])
 
   const goLaunch = useCallback((model) => {
     setLaunchModel(model)
+    setLaunchKey(value => value + 1)
     setTab('launch')
   }, [])
 
   const running = servers.filter((s) => s.running).length
-  const modelCount = hardware ? null : null
+  const favoriteLaunched = async (server) => {
+    await refreshServers()
+    setSelectedServer(server.id)
+    setTab(current => current === 'favorites' ? 'servers' : current)
+  }
   const vramUsed = hardware?.total_vram_mb
-    ? (hardware.total_vram_mb / 1024).toFixed(1)
+    ? ((hardware.gpus ?? []).reduce((sum, gpu) => sum + Math.max(0, gpu.vram_total_mb - gpu.vram_free_mb), 0) / 1024).toFixed(1)
     : null
   const vramTotal = hardware?.total_vram_mb
     ? Math.round(hardware.total_vram_mb / 1024)
@@ -84,7 +139,7 @@ export default function App() {
             <div className="sb-logo">LL</div>
             <div className="sb-brand-text">
               <div className="sb-brand-name">Local LLM</div>
-              <div className="sb-brand-sub">Launcher v0.4.0</div>
+              <div className="sb-brand-sub">Launcher{version && ` v${version}`}</div>
             </div>
           </div>
         </div>
@@ -96,7 +151,8 @@ export default function App() {
           {TABS.map((t) => (
             <button
               key={t.id}
-              className={`sb-btn ${tab === t.id ? 'active' : ''}`}
+              className={`sb-btn ${t.submenu ? 'sb-submenu' : ''} ${tab === t.id ? 'active' : ''}`}
+              aria-current={tab === t.id ? 'page' : undefined}
               onClick={() => setTab(t.id)}
             >
               <span className="sb-icon">{t.icon}</span>
@@ -127,7 +183,8 @@ export default function App() {
       <main className="main">
         <TopBar title={TABS.find(t => t.id === tab)?.label} breadcrumb={BREADCRUMBS[tab]}>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
-          <button className="topbar-btn topbar-btn-ghost" onClick={refreshServers}>Refresh</button>
+          <button className="topbar-btn topbar-btn-ghost" onClick={refresh} disabled={refreshing}
+            aria-busy={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
           <button className="topbar-btn topbar-btn-primary" onClick={() => goLaunch(null)}>Launch a model</button>
         </TopBar>
 
@@ -135,12 +192,14 @@ export default function App() {
           {tab === 'dashboard' && (
             <Dashboard hardware={hardware} servers={servers} goLaunch={goLaunch} setTab={setTab} notify={notify} />
           )}
-          {tab === 'models' && <Models hardware={hardware} goLaunch={goLaunch} notify={notify} />}
+          {tab === 'models' && <Models goLaunch={goLaunch} notify={notify} />}
           {tab === 'launch' && (
-            <Launch hardware={hardware} initialModel={launchModel} notify={notify}
+            <Launch key={launchKey} hardware={hardware} initialModel={launchModel} notify={notify}
               onLaunched={() => { refreshServers(); setTab('servers') }} />
           )}
-          {tab === 'servers' && <Servers servers={servers} refresh={refreshServers} notify={notify} />}
+          {tab === 'favorites' && <Favorites onLaunched={favoriteLaunched} onEdit={goLaunch} notify={notify} />}
+          {tab === 'servers' && <Servers servers={servers} refresh={refreshServers} notify={notify} selectedServer={selectedServer} />}
+          {tab === 'benchmarks' && <Benchmarks />}
           {tab === 'settings' && <Settings hardware={hardware} notify={notify} />}
         </div>
       </main>

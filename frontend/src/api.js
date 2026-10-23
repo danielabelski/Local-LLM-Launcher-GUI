@@ -16,7 +16,11 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  checkUpdate: (engine) => request(`/api/updates/check/${engine}`, { method: 'POST' }),
+  startUpdate: (checkId) => request('/api/updates', { method: 'POST', body: JSON.stringify({ check_id: checkId }) }),
+  updateStatus: () => request('/api/updates'),
   hardware: () => request('/api/hardware'),
+  engineVersions: () => request('/api/engine-versions'),
   about: () => request('/api/about'),
   models: () => request('/api/models'),
   search: (q) => request(`/api/models/search?q=${encodeURIComponent(q)}`),
@@ -25,13 +29,20 @@ export const api = {
     request('/api/downloads', { method: 'POST', body: JSON.stringify({ repo_id: repoId, filename }) }),
   downloads: () => request('/api/downloads'),
   catalog: (engine) => request(`/api/catalog/${engine}`),
-  advise: (engine, repoId, config) =>
-    request('/api/advise', { method: 'POST', body: JSON.stringify({ engine, repo_id: repoId, config }) }),
+  advise: (engine, repoId, config, engineMode) =>
+    request('/api/advise', { method: 'POST', body: JSON.stringify({ engine, repo_id: repoId, config, engine_mode: engineMode }) }),
   presets: (engine, repoId) =>
     request(`/api/presets?engine=${engine}&repo_id=${encodeURIComponent(repoId)}`),
   launch: (engineMode, repoId, config) =>
     request('/api/servers', { method: 'POST', body: JSON.stringify({ engine_mode: engineMode, repo_id: repoId, config }) }),
   servers: () => request('/api/servers'),
+  favorites: () => request('/api/favorites'),
+  archiveFavorite: (id) => request(`/api/favorites/${id}`, { method: 'DELETE' }),
+  previousLaunch: (repoId) => request(`/api/previous-launch?repo_id=${encodeURIComponent(repoId)}`),
+  saveFavorite: (id, name) => request(`/api/servers/${id}/favorites`, { method: 'POST', body: JSON.stringify({ name }) }),
+  launchFavorite: (id) => request(`/api/favorites/${id}/launch`, { method: 'POST' }),
+  benchmarks: () => request('/api/benchmarks'),
+  benchmark: (id) => request(`/api/servers/${id}/benchmark`, { method: 'POST' }),
   serverLogs: (id, n = 200) => request(`/api/servers/${id}/logs?n=${n}`),
   stopServer: (id) => request(`/api/servers/${id}/stop`, { method: 'POST' }),
   removeServer: (id) => request(`/api/servers/${id}`, { method: 'DELETE' }),

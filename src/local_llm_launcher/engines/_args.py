@@ -40,6 +40,8 @@ def build_args_and_env(engine: str, config: Dict[str, Any]) -> Tuple[List[str], 
         if spec["type"] == "bool":
             if value:
                 argv.append(cli_flag)
+            elif spec.get("negative_flag"):
+                argv.append(spec["negative_flag"])
         else:
             argv.extend([cli_flag, str(value)])
 

@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Dict
 
 from ._args import build_args_and_env
+from .placement import normalize_device_ids, validate
 
 IMAGE = "vllm/vllm-openai:latest"
 HF_CACHE = os.path.expanduser("~/.cache/huggingface")
@@ -26,23 +27,32 @@ def _write_env_file(env: Dict[str, str]) -> str:
 
 
 def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    validate("vllm-docker", config)
     # Build vLLM flags with the *container* port, not the host port.
-    container_cfg = dict(config)
+    container_cfg = {k: v for k, v in config.items() if k != "host"}
     host_port = int(config.get("port", 8000))
     container_cfg["port"] = 8000
     flags, env, extra = build_args_and_env("vllm", container_cfg)
 
     container_name = f"llml-{uuid.uuid4().hex[:8]}"
-    gpus = '"device=' + str(config["device_ids"]) + '"' if config.get("device_ids") else "all"
+    device_ids = normalize_device_ids(config.get("device_ids"))
+    gpus = f'"device={device_ids}"' if device_ids is not None else "all"
+    raw_host = config.get("host")
+    host = "127.0.0.1" if raw_host is None else str(raw_host).strip()
 
     argv = [
         "docker", "run", "--rm",
         "--name", container_name,
         "--gpus", gpus,
-        "-p", f"{host_port}:8000",
+        "-p", f"{host}:{host_port}:8000" if host else f"{host_port}:8000",
         "-v", f"{HF_CACHE}:/root/.cache/huggingface",
         "--ipc=host",
     ]
+    # Some NVIDIA Container Toolkit setups expose UVM in the container but do
+    # not grant access to its device cgroup. CUDA then fails with error 999 even
+    # though nvidia-smi can see the GPU. An explicit mapping grants that access.
+    if os.path.exists("/dev/nvidia-uvm"):
+        argv.append("--device=/dev/nvidia-uvm")
 
     # Pass secrets via --env-file instead of -e to avoid exposing them in ps output.
     env_file = None
@@ -63,7 +73,8 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         argv.extend(["-e", f"{var}={value}"])
 
     argv.append(IMAGE)
-    argv.extend(["--model", model["repo_id"], "--host", "0.0.0.0"] + flags + extra)
+    argv.extend(["--model", model["repo_id"], "--host", "0.0.0.0"] + flags
+                + list(config.get("_mtp_args") or ()) + extra)
 
     return {
         "argv": argv,
@@ -71,4 +82,5 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         "port": host_port,
         "health_url": f"http://127.0.0.1:{host_port}/health",
         "container_name": container_name,
+        "env_file": env_file,
     }

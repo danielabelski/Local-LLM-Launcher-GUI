@@ -19,7 +19,8 @@
 
 A friendly, browser-based control panel for downloading and running large
 language models ("LLMs" — the AI models behind chatbots like ChatGPT, except
-running on **your own computer**) using **vLLM**, **llama.cpp**, or **SGLang**.
+running on **your own computer**) using **vLLM**, **llama.cpp**, **SGLang**, or
+**Hugging Face TGI**.
 Built for people who don't want to memorize cryptic command-line flags or spend
 an afternoon guessing why a model won't load.
 
@@ -30,6 +31,12 @@ fit *before* you click launch. If a launch fails anyway, the app translates
 the error into something you can actually act on.
 
 ![Dashboard screenshot](docs/images/dashboard.png)
+
+> **Experimental branch:** SGLang and TGI support live on
+> [`experimental/sglang-integration`](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/tree/experimental/sglang-integration).
+> The branch follows launcher v0.5.7. SGLang options were checked against
+> v0.5.22, but a live model run still depends on your GPU and installed packages.
+> Hugging Face archived TGI in March 2026; its final release is v3.3.7.
 
 ---
 
@@ -52,21 +59,59 @@ the error into something you can actually act on.
      Docker image.
    - **[SGLang](https://github.com/sgl-project/sglang)** — high-performance
      serving with RadixAttention prefix caching and structured generation.
-     Great for agents and repeated prompts. Install via `pip install sglang`.
-
-   > **Note on SGLang support:** SGLang integration lives on the
-   > [`experimental/sglang-integration`](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/tree/experimental/sglang-integration)
-   > branch. It is not merged into `main` yet because upstream bugs in
-   > `apache-tvm-ffi` make it unreliable — processor loading can fail on
-   > models with multimodal architectures, and the TVM JIT compiler crashes
-   > on NVIDIA Blackwell GPUs (RTX 5060 Ti / SM120). Use at your own risk;
-   > vLLM and llama.cpp are the stable options.
+     Great for agents and repeated prompts. Install with `pip install sglang==0.5.22`
+     in the same Python environment as the launcher.
+   - **[Hugging Face TGI](https://github.com/huggingface/text-generation-inference)** —
+     an archived inference server for Hugging Face models. Requires Docker and
+     an NVIDIA GPU. Pull its final image with
+     `docker pull ghcr.io/huggingface/text-generation-inference:3.3.7`.
 
    Don't worry too much about choosing — the app detects what you have
    installed and tells you what's missing, with instructions, on the
-   **Settings** page.
+  **Settings** page.
+
+The Dashboard reads each installed engine's version and checks GitHub's latest
+stable release. llama.cpp nightly builds include a separate build number, which
+may advance between stable releases. If GitHub is unavailable, the installed
+version still appears.
 
 ## Getting it running
+
+### Optional vLLM backend tuning
+
+Launch → Advanced settings includes **linear**, **MoE** (mixture-of-experts),
+and **attention** backends (alternative implementations of the model's calculations).
+Leave them **automatic** unless comparing a particular implementation. vLLM
+0.30 already improves automatic NVFP4 selection (4-bit model computation) on
+compatible RTX 50-series models; selecting a backend does not convert a model
+to that format.
+
+The optional `b12x` implementations target SM120/121 (GPU capability versions). Install the `vllm[b12x]` extra in **the same Python
+environment as the configured vLLM executable**, preserving your chosen vLLM
+version. Docker users need the dependency inside their image. The launcher
+does not install it automatically.
+
+For vLLM 0.30 the attention selector is **`B12X`**, despite earlier release
+discussion using `B12X_ATTN`. It requires BF16 (16-bit brain floating point)
+model computation and compatible conversation memory, and cannot split context
+processing across GPUs. A model stored in float32 qualifies when precision is
+left on automatic, because vLLM runs it as BF16 on these GPUs. B12X MoE also
+has model-format restrictions and cannot use expert parallelism (splitting
+experts among separate workers).
+
+Native checks inspect the selected executable, not the launcher's Python.
+Unavailable checks are shown as unverified; Docker runtime/package support is
+always unverified here. The first check of a vLLM installation can take up to
+a minute while vLLM loads its libraries: the Launch page shows "still being
+checked" in the meantime, and **Launch** waits for the answer. Results are
+reused for 10 minutes and rechecked as soon as you install or upgrade packages
+in that environment. Options typed in **Extra arguments** are checked the way
+vLLM reads them, including underscore spellings such as `--linear_backend`.
+Package presence and recognized flags do not guarantee
+a model will run or be faster. Compare performance on your own GPU before
+keeping an override. See the [versioned B12X documentation](https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/b12x.md).
+
+### Install the launcher
 
 Open a terminal (on Windows: search for "Command Prompt" or "PowerShell"; on
 Mac: search for "Terminal"; on Linux: you know where it is) and run:
@@ -89,16 +134,32 @@ local-llm-launcher
 
 Your web browser should open automatically to `http://127.0.0.1:8765`. If it
 doesn't, open that address yourself. **This only runs on your own computer —
-nothing is sent anywhere else**, and no other device on your network can
-reach it. If port 8765 is already in use, the app automatically picks the next
-free port and tells you in the terminal.
+nothing is sent anywhere else**, and no other device on your network can reach
+it. (Model servers and Open WebUI follow the same loopback-only rule unless
+you turn on the **LAN access** toggle in Settings, which binds them to
+`0.0.0.0` for other devices on your network.) If port 8765 is already in use,
+the app automatically picks the next free port and tells you in the terminal.
 
 To stop the app, go back to the terminal window and press `Ctrl+C`.
+
+**Reaching it from your other devices through Tailscale (optional).** The app
+still listens only on this computer; Tailscale's `serve` feature forwards your
+private tailnet to it. Start the app with the address Tailscale gives you:
+
+```bash
+local-llm-launcher --no-browser --allow-host mybox.tailnet-name.ts.net
+tailscale serve --bg --https=8765 http://127.0.0.1:8765
+```
+
+Then open `https://mybox.tailnet-name.ts.net:8765` on any device in your
+tailnet. `--allow-host` accepts exact names only (no wildcards) and can be
+repeated. Engine source updates stay available only from the computer itself.
 
 ## Using it — the short version
 
 1. **Dashboard** — confirms the app can see your hardware (GPU, memory) and
-   which engines (vLLM / llama.cpp) it found. There's also a one-click
+   which engines it found, with installed and latest GitHub release versions.
+   There's also a one-click
    launcher for **[Open WebUI](https://github.com/open-webui/open-webui)** — a
    polished chat interface — right under "Running now." If it's not installed,
    the button is greyed out with the install command ready to copy; if it is,
@@ -107,7 +168,9 @@ To stop the app, go back to the terminal window and press `Ctrl+C`.
 2. **Models** — search for a model on HuggingFace (the most popular library of
    AI models) and download it, or see what you've already got. Each model
    shows whether it'll **Fit**, be **Tight**, or **Won't fit** on your
-   hardware.
+   hardware. When a model ships the same weights in several formats, only the
+   copy vLLM loads (safetensors, not older `.bin` files) is downloaded and
+   counted.
    ![Models screenshot](docs/images/models.png)
 3. **Launch** — pick a model, pick a preset (or leave it on *Safe*), and read
    the big green/yellow/red verdict at the top. Every setting below it has a
@@ -125,6 +188,92 @@ To stop the app, go back to the terminal window and press `Ctrl+C`.
    models that require accepting a license), point the app at extra model
    folders, or fix the path to `llama-server` if it wasn't found
    automatically.
+
+## Advanced hardware controls
+
+### Choosing GPUs for vLLM
+
+**Which GPUs to use** takes the GPU numbers shown by `nvidia-smi`, separated by
+commas: `0,1` for both of two cards, `1` for just the second. Entries such as
+`0 1` (a space instead of a comma) are refused with an explanation rather than
+silently misread. For native vLLM the launcher sets
+`CUDA_DEVICE_ORDER=PCI_BUS_ID`, so the numbers always match `nvidia-smi`. That
+includes a `CUDA_VISIBLE_DEVICES` you set before starting the launcher, which
+CUDA would otherwise number fastest card first. The memory advice budgets the
+GPUs selected here, or those in `CUDA_VISIBLE_DEVICES` when this is empty. If
+you add vLLM's own `--device-ids` under **Extra arguments**, it picks positions
+within the GPUs selected here.
+
+### llama.cpp placement
+
+For llama.cpp, the advanced launch settings include:
+
+- **GPU selection and proportions:** select the engine's device names and set
+  `--tensor-split`, for example `3,1` for unequal cards or `40,40,40` for equal
+  shares on three cards. These are proportions, not exact layer counts.
+  `--split-mode layer` distributes layers and their conversation memory (KV
+  cache) across the cards. The older `row` mode keeps KV on the main GPU;
+  experimental `tensor` mode needs Flash Attention and remains model/backend
+  dependent. Recent llama.cpp builds support `tensor` with compressed `q8_0`
+  or `q4_0` K/V cache. Older builds may need updating; switching to `layer` or
+  `f16` cache is another option. NVFP4 describes model weights, not the K/V
+  cache: an NVFP4 GGUF can request Q8 conversation memory independently.
+  Safetensors-format NVFP4 models still require an engine that loads that
+  format, such as vLLM. See [upstream tensor/quantized-KV support](https://github.com/ggml-org/llama.cpp/pull/23792).
+- **MoE expert placement:** `--cpu-moe` keeps all experts (the selectively used
+  parts of a mixture-of-experts model) in RAM. `--n-cpu-moe N` keeps experts
+  from the first N layers in RAM; reducing N lets more live on the GPU.
+  Transfers between RAM and GPU can reduce speed. These controls cannot promise
+  a precise memory fit without knowing the model's individual tensor sizes.
+- **Microbatch size:** `--ubatch-size` limits how many tokens are processed
+  together within a batch. Smaller values may reduce working memory at a speed
+  cost.
+- **NUMA:** on machines with multiple CPU/memory locality groups,
+  `--numa distribute` spreads llama.cpp threads across nodes; `isolate` uses the
+  startup node; `numactl` respects CPU placement arranged externally. The
+  separate **Interleave memory** option wraps native llama.cpp or vLLM with
+  `numactl --interleave=all`. It spreads memory allocations across allowed
+  nodes and does not itself bind CPU threads. It requires Linux and `numactl`
+  and does not apply to Docker launches.
+
+NUMA options are off by default. They support ordinary multi-CPU computers as
+well as VMs; recommendations use the nodes visible and allowed to the app.
+A VM exposing one node cannot use these options to distribute work across
+hidden host nodes. There is no automatic change to host configuration or system
+page caches. Benchmark your workload before retaining a NUMA setting.
+
+The existing memory-mapping and RAM-lock controls are translated to the newer
+`--load-mode` syntax when the selected llama.cpp binary supports it. Older
+binaries keep their legacy flags. Other advanced flags still depend on your
+installed engine version; failed launches retain their logs for diagnosis.
+
+The video linked in [issue #15](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/issues/15)
+also uses a modified llama.cpp fork. Its expert prefetch/pinning optimizations
+are not stock flags, and this launcher does not promise that video's speedup.
+
+## Updating an engine from source
+
+In **Settings → Build current engine source**, check requirements, inspect the
+target commit (an exact source revision), then explicitly choose to build it.
+Nothing is downloaded or upgraded automatically. Supported recipes are Linux
+llama.cpp CPU/CUDA and Linux native vLLM with NVIDIA CUDA prerequisites.
+Other platforms and Docker installations keep their manual installation path.
+
+Builds download official upstream source and dependencies into separate folders
+under the app data directory. Current source may contain unreleased changes.
+Prerequisites and free disk space are checked before starting; compiler jobs
+are limited to reduce CPU and memory pressure. Progress, recent output, and
+failures appear in Settings. Only a validated executable is selected for future
+launches. Running servers keep their existing executable, and older copies are
+retained. You can restore an older executable path in Settings.
+
+Use a browser directly on the launcher computer for these update controls.
+A failed build keeps the previous engine selected, removes its downloaded
+source and build environment to free disk space, and keeps its log. An
+interrupted build (for example, if the launcher is closed) also leaves the
+previous engine selected, but its partial files may remain in the app data
+directory. The launcher must stay open to finish a
+build and select its result.
 
 ## What "Fit / Tight / Won't fit" means
 
@@ -154,11 +303,10 @@ by a cryptic error.
 
 ### SGLang crashes on startup with a TVM / ROCm error (NVIDIA Blackwell GPUs)
 
-If you have an RTX 5060 Ti or other Blackwell-generation GPU (SM120) and
-SGLang crashes during startup with an error mentioning `_get_rocm_target`,
-`tvm_ffi`, or "Could not detect ROCm GPU architecture" — this is an upstream
-bug, not something wrong with your setup. The TVM JIT compiler mistakenly
-tries to detect AMD hardware on your NVIDIA card.
+On older SGLang installations, an RTX 5060 Ti or another Blackwell-generation
+GPU (SM120) could crash during startup with `_get_rocm_target`, `tvm_ffi`, or
+"Could not detect ROCm GPU architecture". First update to SGLang v0.5.22.
+If the same error persists, try this workaround:
 
 **Quick fix:** In the **Launch** page, expand **Advanced** and paste this into
 the **Extra raw flags** field:
@@ -167,24 +315,23 @@ the **Extra raw flags** field:
 --attention-backend triton --sampling-backend pytorch
 ```
 
-This tells SGLang to skip the FlashInfer attention kernel (which triggers the
-buggy JIT step) and use Triton + PyTorch instead. Performance is slightly
-lower but the server starts and runs correctly.
+This selects Triton attention and PyTorch sampling. It may avoid the JIT path
+that failed in older versions; compare speed and inspect the log after launch.
 
 ### SGLang fails to install (dependency conflict)
 
 SGLang depends on `apache-tvm-ffi`, which comes in pre-release versions. If
-`pip install sglang` fails with a version resolution error, try:
+`pip install 'sglang==0.5.22'` fails with a version resolution error, try:
 
 ```bash
-pip install --prerelease=allow sglang
+pip install --pre 'sglang==0.5.22'
 ```
 
 Or if you use `uv` (faster package installer):
 
 ```bash
 pip install uv
-uv pip install --prerelease=allow sglang
+uv pip install --prerelease=allow 'sglang==0.5.22'
 ```
 
 ### SGLang segfaults or gives dtype errors after an update
@@ -220,7 +367,7 @@ same `.venv`:
 
 ```bash
 source .venv/bin/activate
-pip install sglang
+pip install 'sglang==0.5.22'
 ```
 
 ### General: a launch fails and the error is cryptic
@@ -242,7 +389,7 @@ Servers page) and search for the key phrase on the engine's GitHub issues:
   original vllm-cli works and exactly what changed here.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — technical deep dive:
   stack choices, module map, the advisor's memory math.
-- **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — granular history of what was
+- **[CHANGELOG.md](CHANGELOG.md)** — granular history of what was
   built and fixed, including real failures encountered on real hardware.
 - **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** — how to contribute,
   including a warm welcome to "vibe coders" (people contributing with the
@@ -264,3 +411,23 @@ Servers page) and search for the key phrase on the engine's GitHub issues:
 
 MIT — see [LICENSE](LICENSE). Portions adapted from
 [vllm-cli](https://github.com/Chen-zexi/vllm-cli), © Chen-zexi, MIT license.
+
+## Saved launch settings
+
+- **Servers → Save Launch Settings to Favorites** saves a named configuration.
+- **Favorites → Launch** starts it immediately; **Edit** opens the Launch page
+  with those settings so you can review and change them first.
+- **Archive** removes a favorite after confirmation and keeps a recovery copy
+  in one private `favorites-archive.json` file in the launcher data directory
+  (normally `~/.local-llm-launcher/`). The confirmation shows the exact path
+  on the computer running the launcher.
+- **Launch → Reload previous settings** restores the latest retained launch
+  configuration for that model, even after its server entry is removed. The note below it reports the observed load
+  outcome. Older records without an observed outcome are marked unavailable.
+  Settings are restored only when requested, and the current hardware advice
+  is recalculated before launch.
+
+The launcher can retain an older downloaded model revision when an engine has
+cached only the metadata for a newer revision. A model's repository name does
+not determine its quantization format: leave **Quantization override** empty
+unless its actual configuration requires an explicit override.

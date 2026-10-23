@@ -145,3 +145,48 @@ def test_guess_param_count():
     assert discovery.guess_param_count_b("Qwen3.6-35B-A3B-AWQ-4bit") == 35.0  # MoE total, not active
     assert discovery.guess_param_count_b("gemma-2-2b-it") == 2.0
     assert discovery.guess_param_count_b("no-size-here") is None
+
+
+def _size(hub):
+    return discovery.scan_hf_cache(hub)[0].size_bytes
+
+
+def test_weights_shipped_in_two_formats_count_once(tmp_path):
+    # vLLM loads safetensors and ignores .bin copies of the same weights.
+    make_hf_model(tmp_path, "org", "both", {"model.safetensors": 5000, "pytorch_model.bin": 5000})
+    assert _size(tmp_path) == 5000
+
+
+def test_mistral_consolidated_copy_counts_once(tmp_path):
+    # With consolidated files present, vLLM's automatic loader reads only those.
+    make_hf_model(tmp_path, "mistralai", "m", {"consolidated.safetensors": 4000,
+                  "model-00001-of-00002.safetensors": 2100, "model-00002-of-00002.safetensors": 1900})
+    assert _size(tmp_path) == 4000
+
+
+def test_safetensors_index_excludes_unlisted_files(tmp_path):
+    snap = make_hf_model(tmp_path, "org", "indexed", {"model-00001-of-00001.safetensors": 3000,
+                                                        "extra.safetensors": 500})
+    (snap / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"lm_head.weight": "model-00001-of-00001.safetensors"}}))
+    assert _size(tmp_path) == 3000
+
+
+def test_bin_only_repo_ignores_training_state(tmp_path):
+    make_hf_model(tmp_path, "org", "old", {"pytorch_model.bin": 3000, "training_args.bin": 10,
+                                            "optimizer.pt": 99})
+    assert _size(tmp_path) == 3000
+
+
+def test_nested_copies_are_not_loaded_weights(tmp_path):
+    snap = make_hf_model(tmp_path, "org", "nested", {"model.safetensors": 5000})
+    (snap / "original").mkdir()
+    (snap / "original" / "model.safetensors").write_bytes(b"\0" * 5000)
+    assert _size(tmp_path) == 5000
+
+
+def test_weights_only_in_subfolders_still_listed(tmp_path):
+    snap = make_hf_model(tmp_path, "org", "sub", {"config.json": 10})
+    (snap / "unet").mkdir()
+    (snap / "unet" / "model.safetensors").write_bytes(b"\0" * 700)
+    assert _size(tmp_path) == 700

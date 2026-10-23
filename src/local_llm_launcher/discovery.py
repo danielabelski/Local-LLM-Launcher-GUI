@@ -78,10 +78,18 @@ def _latest_snapshot(repo_dir: Path) -> Optional[Path]:
     snaps = repo_dir / "snapshots"
     if not snaps.is_dir():
         return None
-    candidates = [d for d in snaps.iterdir() if d.is_dir()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda d: d.stat().st_mtime)
+    candidates = sorted((d for d in snaps.iterdir() if d.is_dir()),
+                        key=lambda d: d.stat().st_mtime, reverse=True)
+    # Engine metadata lookups can cache a newer revision without its weights.
+    # Keep the most recent usable local revision visible in that case.
+    for snap in candidates:
+        files = [f for f in snap.rglob("*")
+                 if f.is_file() and f.suffix.lower() in _WEIGHT_EXTS]
+        weights = [f for f in files if f.suffix.lower() == ".gguf"]
+        weights += _loaded_weights(snap, files)
+        if any(_file_size(f) > 0 for f in weights):
+            return snap
+    return None
 
 
 def _read_config(snap: Path) -> Dict[str, Any]:
@@ -104,6 +112,33 @@ def _file_size(p: Path) -> int:
         return 0
 
 
+_NOT_FOR_INFERENCE = ("training_args.bin", "optimizer.bin", "optimizer.pt", "scheduler.pt", "scaler.pt")
+
+
+def _loaded_weights(snap: Path, files: List[Path]) -> List[Path]:
+    """The files vLLM's automatic loader reads (v0.30 DefaultModelLoader), so a repo
+    that ships the same weights twice (.bin and .safetensors, or Mistral's
+    consolidated copy beside the sharded one) is counted once."""
+    # vLLM globs only the top folder; keep nested files only when nothing is on top.
+    files = [f for f in files if f.parent == snap] or files
+    safetensors = [f for f in files if f.suffix.lower() == ".safetensors"]
+    consolidated = [f for f in safetensors if f.name.startswith("consolidated")]
+    chosen = consolidated or safetensors
+    if chosen:
+        index = "consolidated.safetensors.index.json" if consolidated else "model.safetensors.index.json"
+        try:
+            # The map lists every tensor; only its few distinct file names matter.
+            listed = set(json.loads((snap / index).read_text())["weight_map"].values())
+            return [f for f in chosen if f.relative_to(snap).as_posix() in listed] or chosen
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return chosen
+    for suffix in (".bin", ".pt"):
+        chosen = [f for f in files if f.suffix.lower() == suffix and f.name not in _NOT_FOR_INFERENCE]
+        if chosen:
+            return chosen
+    return []
+
+
 def _scan_repo(repo_dir: Path) -> Optional[LocalModel]:
     name = repo_dir.name
     if not name.startswith("models--"):
@@ -114,17 +149,17 @@ def _scan_repo(repo_dir: Path) -> Optional[LocalModel]:
         return None
 
     gguf_files: List[Dict[str, Any]] = []
+    other_weights: List[Path] = []
     weight_bytes = 0
-    has_safetensors = False
     for f in sorted(snap.rglob("*")):
         if not f.is_file() and not f.is_symlink():
             continue
         suffix = f.suffix.lower()
         if suffix not in _WEIGHT_EXTS:
             continue
-        size = _file_size(f)
-        weight_bytes += size
         if suffix == ".gguf":
+            size = _file_size(f)
+            weight_bytes += size
             gguf_files.append({
                 "filename": f.name,
                 "path": str(f),
@@ -132,8 +167,10 @@ def _scan_repo(repo_dir: Path) -> Optional[LocalModel]:
                 "size_gb": round(size / (1024**3), 2),
                 "quant": guess_gguf_quant(f.name),
             })
-        elif suffix == ".safetensors":
-            has_safetensors = True
+        else:
+            other_weights.append(f)
+    has_safetensors = any(f.suffix.lower() == ".safetensors" for f in other_weights)
+    weight_bytes += sum(_file_size(f) for f in _loaded_weights(snap, other_weights))
 
     if weight_bytes == 0:
         return None
@@ -208,3 +245,40 @@ def list_installed(extra_gguf_folders: Optional[List[str]] = None) -> List[Local
     for folder in extra_gguf_folders or []:
         models.extend(scan_gguf_folder(folder))
     return models
+
+
+# Name segments of image/audio encoder tensors in multimodal checkpoints
+# (Qwen-VL "visual", LLaVA/Mistral "vision_tower" + "multi_modal_projector",
+# Gemma 3n "audio_tower"/"embed_vision"). Text-only mode skips loading them.
+_ENCODER_SEGMENTS = frozenset({
+    "visual", "vision_tower", "vision_model", "vision_encoder", "multi_modal_projector",
+    "mm_projector", "audio_tower", "audio_model", "audio_encoder", "embed_vision", "embed_audio",
+})
+# A safetensors header is JSON metadata; anything this large is not a real header.
+_MAX_SAFETENSORS_HEADER = 100 * 1024**2
+
+
+def _safetensors_tensor_bytes(path: Path) -> Dict[str, int]:
+    """{tensor name: byte length} from a safetensors header; tensor data is never read."""
+    with open(path, "rb") as stream:
+        length = int.from_bytes(stream.read(8), "little")
+        if not 0 < length <= _MAX_SAFETENSORS_HEADER:
+            raise ValueError("not a safetensors header")
+        header = json.loads(stream.read(length))
+    return {name: int(entry["data_offsets"][1]) - int(entry["data_offsets"][0])
+            for name, entry in header.items() if name != "__metadata__"}
+
+
+def encoder_weight_bytes(snapshot: Union[str, Path]) -> int:
+    """Bytes of image/audio encoder weights that text-only mode skips, or 0 if unknown."""
+    snap = Path(snapshot)
+    try:
+        files = _loaded_weights(snap, [f for f in snap.rglob("*.safetensors") if f.is_file()])
+        total = 0
+        for f in files:
+            for name, size in _safetensors_tensor_bytes(f).items():
+                if _ENCODER_SEGMENTS.intersection(name.split(".")):
+                    total += size
+        return total
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
+        return 0

@@ -1,0 +1,20 @@
+{
+  "engine": "tgi",
+  "description": "Hugging Face Text Generation Inference 3.3.7 Docker controls. TGI is upstream maintenance only.",
+  "flags": [
+    {"key":"port","flag":null,"label":"Port","type":"int","default":8082,"min":1024,"max":65535,"category":"essential","help":"The port apps use on your computer. TGI listens inside Docker on port 80; the launcher maps this port to it."},
+    {"key":"max_total_tokens","flag":"--max-total-tokens","label":"Maximum context and reply tokens","type":"int","default":null,"min":512,"max":262144,"category":"essential","help":"Maximum tokens in one request, including prompt and reply. Leave empty for TGI to use the model limit. Longer requests need more GPU memory."},
+    {"key":"max_input_tokens","flag":"--max-input-tokens","label":"Maximum prompt tokens","type":"int","default":null,"min":128,"max":262143,"category":"essential","help":"Largest prompt TGI accepts. It must be smaller than maximum context and reply tokens, leaving room for the answer."},
+    {"key":"num_shard","flag":"--num-shard","label":"Number of GPUs","type":"int","default":null,"min":1,"max":8,"category":"essential","help":"Split one model across this many GPUs. Leave empty to let TGI use all visible GPUs."},
+    {"key":"cuda_memory_fraction","flag":"--cuda-memory-fraction","label":"GPU memory usage limit","type":"float","default":1.0,"min":0.3,"max":1.0,"step":0.01,"category":"performance","help":"Limits the share of GPU memory TGI may allocate. Lower it if other programs need VRAM; that leaves less room for the model and conversation."},
+    {"key":"max_concurrent_requests","flag":"--max-concurrent-requests","label":"Concurrent requests","type":"int","default":128,"min":1,"max":1024,"category":"performance","help":"Maximum number of simultaneous requests. Keep it low on personal hardware to avoid excess memory use."},
+    {"key":"max_batch_total_tokens","flag":"--max-batch-total-tokens","label":"Batch token budget","type":"int","default":null,"min":512,"max":262144,"category":"advanced","advanced":true,"help":"Total tokens TGI can keep active across requests. Leave empty for automatic sizing; raising it uses more GPU memory."},
+    {"key":"kv_cache_dtype","flag":"--kv-cache-dtype","label":"Conversation memory precision","type":"choice","default":null,"choices":[null,"fp8_e4m3fn","fp8_e5m2"],"category":"performance","help":"8-bit cache can use less VRAM than the model's normal precision. Hardware and model support vary; leave empty unless memory is tight."},
+    {"key":"trust_remote_code","flag":"--trust-remote-code","label":"Allow model's custom code","type":"bool","default":false,"category":"essential","help":"Permit code supplied by the model publisher to run locally. Enable only for a publisher you trust."},
+    {"key":"api_key","flag":null,"env_var":"API_KEY","label":"API key (password)","type":"string","default":null,"category":"api","secret":true,"help":"Require this key from clients. Recommended when local network access is enabled."},
+    {"key":"host","flag":null,"label":"Listen address","type":"string","default":null,"category":"api","help":"The address on your computer that Docker exposes. The launcher uses loopback unless local network access is enabled in Settings."},
+    {"key":"device_ids","flag":null,"label":"GPU numbers","type":"string","default":null,"category":"advanced","advanced":true,"help":"NVIDIA GPU numbers to expose to Docker, separated by commas, such as 0,1. Leave empty for all GPUs."},
+    {"key":"hf_token","flag":null,"env_var":"HF_TOKEN","label":"Hugging Face token","type":"string","default":null,"category":"advanced","advanced":true,"secret":true,"help":"Needed only for gated models. The token is passed to Docker through a private temporary file."},
+    {"key":"extra_args","flag":null,"label":"Extra raw flags","type":"string","default":null,"category":"advanced","advanced":true,"help":"Additional TGI launcher options for experienced users. The launcher passes these to the container unchanged."}
+  ]
+}

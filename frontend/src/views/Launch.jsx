@@ -7,6 +7,7 @@ const ENGINE_LABELS = {
   'vllm-docker': 'vLLM (Docker)',
   llamacpp: 'llama.cpp',
   sglang: 'SGLang',
+  tgi: 'Hugging Face TGI (Docker)',
 }
 const CATEGORY_TITLES = {
   essential: 'Essential',
@@ -17,6 +18,7 @@ const CATEGORY_TITLES = {
 function adviceEngine(mode) {
   if (mode === 'llamacpp') return 'llamacpp'
   if (mode === 'sglang') return 'sglang'
+  if (mode === 'tgi') return 'tgi'
   return 'vllm'
 }
 
@@ -25,9 +27,10 @@ function defaultEngineMode(model, hardware) {
   if (model.format === 'gguf') return 'llamacpp'
   if (!hardware) return 'vllm-native'
   if (hardware.apple_silicon || hardware.gpus.length === 0) return 'llamacpp'
-  if (hardware.engines.sglang) return 'sglang'
   if (hardware.engines.vllm_native) return 'vllm-native'
   if (hardware.engines.vllm_docker) return 'vllm-docker'
+  if (hardware.engines.sglang) return 'sglang'
+  if (hardware.engines.tgi) return 'tgi'
   return 'vllm-native'
 }
 
@@ -36,6 +39,7 @@ function engineAvailable(mode, hardware) {
   if (mode === 'vllm-native') return hardware.engines.vllm_native
   if (mode === 'vllm-docker') return hardware.engines.vllm_docker
   if (mode === 'sglang') return hardware.engines.sglang
+  if (mode === 'tgi') return hardware.engines.tgi
   return !!hardware.engines.llamacpp_path
 }
 
@@ -44,7 +48,7 @@ function FlagControl({ spec, value, onChange }) {
   if (spec.type === 'bool') {
     return (
       <label className="row small" style={{ cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!v}
+        <input type="checkbox" aria-label={spec.label} checked={!!v}
           onChange={(e) => onChange(e.target.checked)} />
         {v ? 'On' : 'Off'}
       </label>
@@ -52,7 +56,7 @@ function FlagControl({ spec, value, onChange }) {
   }
   if (spec.type === 'choice') {
     return (
-      <select value={v ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}>
+      <select aria-label={spec.label} value={v ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}>
         {spec.choices.map((c) => (
           <option key={String(c)} value={c ?? ''}>{c === null ? '(automatic)' : String(c)}</option>
         ))}
@@ -60,26 +64,27 @@ function FlagControl({ spec, value, onChange }) {
     )
   }
   if (spec.type === 'float') {
+    const num = typeof v === 'number' && !Number.isNaN(v) ? v : (spec.default ?? spec.min ?? 0)
     return (
       <span className="row">
         <input type="range" min={spec.min} max={spec.max} step={spec.step || 0.01}
-          value={v || spec.min}
+          value={num}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           aria-label={spec.label} />
-        <span className="mono small" style={{ width: 44 }}>{(v || spec.min).toFixed(2)}</span>
+        <span className="mono small" style={{ width: 44 }}>{num.toFixed(2)}</span>
       </span>
     )
   }
   if (spec.type === 'int') {
     return (
-      <input type="number" min={spec.min} max={spec.max} step={spec.step || 1}
+      <input aria-label={spec.label} type="number" min={spec.min} max={spec.max} step={spec.step || 1}
         value={v === '' ? '' : v}
         placeholder="(automatic)"
         onChange={(e) => onChange(e.target.value === '' ? null : parseInt(e.target.value, 10))} />
     )
   }
   return (
-    <input type={spec.secret ? 'password' : 'text'} value={v ?? ''}
+    <input aria-label={spec.label} type={spec.secret ? 'password' : 'text'} value={v ?? ''}
       placeholder="(not set)"
       onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)} />
   )
@@ -114,56 +119,106 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   const [presets, setPresets] = useState([])
   const [activePreset, setActivePreset] = useState(null)
   const [advice, setAdvice] = useState(null)
+  const [adviceError, setAdviceError] = useState(null)
   const [launching, setLaunching] = useState(false)
+  const [previous, setPrevious] = useState(null)
+  const [previousError, setPreviousError] = useState('')
+  const [configLoading, setConfigLoading] = useState(false)
+  const [restoreKey, setRestoreKey] = useState(0)
   const debounce = useRef(null)
+  const initializedModel = useRef(null)
+  const pendingSettings = useRef(initialModel?.engine_mode && initialModel?.config ? initialModel : null)
+  const configEdited = useRef(false)
 
   const model = useMemo(() => models.find((m) => m.repo_id === repoId), [models, repoId])
 
   useEffect(() => {
+    let active = true
     api.models().then((r) => {
+      if (!active) return
       const list = r?.models ?? []
       setModels(list)
       if (!repoId && list.length > 0) setRepoId(initialModel?.repo_id ?? list[0].repo_id)
-    }).catch(() => setModels([]))
+    }).catch(() => { if (active) setModels([]) })
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
-    if (!model) return
-    const mode = defaultEngineMode(model, hardware)
+    if (!model || !hardware || initializedModel.current === model.repo_id) return
+    initializedModel.current = model.repo_id
+    const mode = initialModel?.repo_id === model.repo_id && initialModel?.engine_mode
+      ? initialModel.engine_mode : defaultEngineMode(model, hardware)
     setEngineMode(mode)
   }, [model, hardware])
 
   useEffect(() => {
-    if (!model || !engineMode) return
-    const eng = adviceEngine(engineMode)
-    api.catalog(eng).then(setCatalog).catch(() => setCatalog(null))
-    api.presets(eng, model.repo_id).then((r) => {
-      const ps = r?.presets ?? []
-      setPresets(ps)
-      if (ps.length > 0) {
-        setConfig({ ...ps[0].config })
-        setActivePreset(ps[0].name)
-      }
-    }).catch(() => setPresets([]))
-  }, [model, engineMode])
+    if (!repoId) return
+    let active = true
+    setPrevious(null)
+    setPreviousError('')
+    api.previousLaunch(repoId).then(result => { if (active) setPrevious(result.previous) })
+      .catch(error => { if (active) setPreviousError(error.message) })
+    return () => { active = false }
+  }, [repoId])
 
   useEffect(() => {
     if (!model || !engineMode) return
+    let active = true
+    const eng = adviceEngine(engineMode)
+    const saved = pendingSettings.current?.repo_id === model.repo_id && pendingSettings.current?.engine_mode === engineMode
+      ? pendingSettings.current : null
+    configEdited.current = false
+    setConfigLoading(true)
+    setCatalog(null)
+    setPresets([])
+    setActivePreset(null)
+    setConfig(saved ? { ...saved.config } : {})
+    api.catalog(eng).then((result) => { if (active) setCatalog(result) }).catch(() => { if (active) setCatalog(null) })
+    api.presets(eng, model.repo_id).then((r) => {
+      if (!active) return
+      const ps = r?.presets ?? []
+      setPresets(ps)
+      if (ps.length > 0 && !saved && !configEdited.current) {
+        setConfig({ ...ps[0].config })
+        setActivePreset(ps[0].name)
+      }
+    }).catch(() => { if (active) setPresets([]) }).finally(() => {
+      if (active) {
+        if (pendingSettings.current === saved) pendingSettings.current = null
+        setConfigLoading(false)
+      }
+    })
+    return () => { active = false }
+  }, [model, engineMode, restoreKey])
+
+  useEffect(() => {
+    if (!model || !engineMode) return
+    let active = true
+    let sequence = 0
+    setAdvice(null)
+    setAdviceError(null)
     const fetchAdvice = () => {
-      api.advise(adviceEngine(engineMode), model.repo_id, config)
-        .then(setAdvice)
-        .catch(() => setAdvice(null))
+      const request = ++sequence
+      api.advise(adviceEngine(engineMode), model.repo_id, config, engineMode)
+        .then((result) => { if (active && request === sequence) { setAdvice(result); setAdviceError(null) } })
+        .catch((error) => { if (active && request === sequence) { setAdvice(null); setAdviceError(error.message) } })
     }
     clearTimeout(debounce.current)
     debounce.current = setTimeout(fetchAdvice, 250)
     const t = setInterval(fetchAdvice, 8000)
-    return () => { clearTimeout(debounce.current); clearInterval(t) }
+    return () => { active = false; clearTimeout(debounce.current); clearInterval(t) }
   }, [model, engineMode, config])
 
   const setFlag = useCallback((key, value) => {
+    configEdited.current = true
     setActivePreset(null)
     setConfig((c) => {
       const next = { ...c }
+      if (key === "cpu_moe" && value) delete next.n_cpu_moe
+      if (key === "n_cpu_moe" && value > 0) delete next.cpu_moe
+      if (key === "split_mode" && value === "none") delete next.tensor_split
+      if (key === "system_prompt" && value) delete next.system_prompt_file
+      if (key === "system_prompt_file" && value) delete next.system_prompt
       if (value === null || value === undefined) delete next[key]
       else next[key] = value
       return next
@@ -171,15 +226,23 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
   }, [])
 
   const applyPreset = (p) => {
+    configEdited.current = true
     setConfig({ ...p.config })
     setActivePreset(p.name)
+  }
+
+  const restorePrevious = () => {
+    pendingSettings.current = { repo_id: repoId, engine_mode: previous.engine, config: previous.config }
+    setEngineMode(previous.engine)
+    setRestoreKey(value => value + 1)
   }
 
   const launch = async () => {
     setLaunching(true)
     try {
-      await api.launch(engineMode, model.repo_id, config)
+      const server = await api.launch(engineMode, model.repo_id, config)
       notify(`Launching ${model.repo_id}. Big models can take 10-15 minutes to load — silence in the log is normal.`)
+      if (server.history_save_error) notify(server.history_save_error, true)
       onLaunched()
     } catch (err) {
       notify(err.message, true)
@@ -194,13 +257,18 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
     )
   }
 
-  const flags = catalog?.flags ?? []
+  const flags = (catalog?.flags ?? []).filter((f) =>
+    !(engineMode === "vllm-docker" && f.key === "numactl_interleave") &&
+    !(config.split_mode === "none" && f.key === "tensor_split") &&
+    !(!config.use_mtp && f.key === "mtp_draft_max"))
   const grouped = ['essential', 'performance', 'api'].map((cat) => ({
     cat, items: flags.filter((f) => f.category === cat && !f.advanced),
   }))
   const advanced = flags.filter((f) => f.advanced)
   const engineMissing = engineMode && !engineAvailable(engineMode, hardware)
-  const level = engineMissing ? 'red' : advice?.overall?.level
+  const level = engineMissing || adviceError ? 'red' : advice?.overall?.level
+  // Red from the memory estimate alone is advice, not a hard stop.
+  const warned = level === 'red' && !engineMissing && !adviceError && advice?.overall?.override === true
   const ggufChoices = model?.gguf_files ?? []
 
   const budget = advice?.budget
@@ -219,6 +287,21 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
           </div>
         </div>
         <div style={{ padding: '14px 20px' }} className="stack">
+          {initialModel?.engine_mode && initialModel?.config && initialModel.repo_id === repoId && <p className="small muted">Editing a copy of “{initialModel.name}”. Review the settings below before launching.</p>}
+          {previous && <div className="previous-launch">
+            <button className="btn btn-ghost sm" disabled={previous.config == null || !!previous.config_save_error || configLoading || launching}
+              onClick={restorePrevious}>Reload previous settings</button>
+            <p className="small" style={{ marginTop: 6 }}>
+              Previous load: <strong>{{ successful: 'Successful', failed: 'Failed', loading: 'Still loading', unknown: 'Outcome unavailable' }[previous.load_status] ?? 'Outcome unavailable'}</strong>
+              {' · '}{ENGINE_LABELS[previous.engine] ?? previous.engine}
+              {previous.started_at && ` · ${new Date(previous.started_at).toLocaleString()}`}
+              {previous.load_status === 'successful' && !previous.running && ' · Server stopped'}
+            </p>
+            {previous.failure_explanation && <p className="small muted">{previous.failure_explanation}</p>}
+            {previous.config_save_error && <p className="small muted">{previous.config_save_error}</p>}
+            {previous.config == null && <p className="small muted">This older launch has no saved settings.</p>}
+          </div>}
+          {previousError && <p className="small muted">Previous settings could not be loaded: {previousError}</p>}
           <div className="grid2">
             <label className="stack" style={{ gap: 4 }}>
               <span className="small muted">Model</span>
@@ -263,7 +346,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
                 <button key={p.name}
                   className={`btn ${activePreset === p.name ? 'btn-primary' : 'btn-ghost'} sm`}
                   title={p.description}
-                  onClick={() => applyPreset(p)}>
+                  disabled={configLoading} onClick={() => applyPreset(p)}>
                   {p.name}
                 </button>
               ))}
@@ -272,6 +355,27 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
         </div>
       </div>
 
+      <div className="section" style={{ padding: '14px 20px' }}>
+        <div className="small">NUMA nodes (groups of CPU cores with their own memory, found on multi-socket machines): {hardware?.numa?.node_count ?? 'unknown'}.
+          {' '}numactl tool {hardware?.numa?.numactl_path ? 'installed' : 'not installed'}.
+          {hardware?.numa?.node_count === 1 && ' With a single node, the NUMA settings have nothing to spread across and won\'t help.'}
+          {' '}These settings are optional; machines with several nodes can benefit, but compare speeds before keeping one.</div>
+        {engineMode === 'llamacpp' && <div className="small" style={{ marginTop: 8 }}>
+          llama.cpp devices: {(hardware?.llama_devices ?? []).length
+            ? hardware.llama_devices.map((d) => d.name).join(', ')
+            : 'not detected; leave device selection unset or enter names from llama-server --list-devices.'}
+          {(hardware?.llama_devices ?? []).length > 0 && <div className="row" style={{ flexWrap: 'wrap' }}>
+            {hardware.llama_devices.map((d) => <label key={d.name} title={d.description} className="row">
+              <input type="checkbox" checked={(config.device || '').split(',').includes(d.name)}
+                onChange={(event) => {
+                  const selected = (config.device || '').split(',').filter(Boolean)
+                  setFlag('device', (event.target.checked ? [...selected, d.name] : selected.filter((name) => name !== d.name)).join(',') || null)
+                }} />{d.name}
+            </label>)}
+          </div>}
+        </div>}
+      </div>
+      {adviceError && <div className="section" role="alert" style={{ padding: '14px 20px', color: 'var(--nogo)' }}>{adviceError}</div>}
       {/* FIT VERDICT + VRAM */}
       {engineMissing && (
         <div className="section">
@@ -283,6 +387,8 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
                   ? 'See the Settings tab for install instructions.'
                   : engineMode === 'sglang'
                     ? 'Install SGLang (pip install sglang).'
+                    : engineMode === 'tgi'
+                      ? 'Pull the Hugging Face TGI Docker image shown in Settings.'
                     : 'Install vLLM (pip install vllm) or pull the vllm/vllm-openai Docker image.'),
             }} />
           </div>
@@ -292,7 +398,7 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
         <div className="section">
           <div style={{ padding: '14px 20px' }} className="stack">
             <FitVerdict overall={advice.overall} />
-            {budget?.available_gb != null && (
+            {budget?.available_gb != null && !budget.fit_unknown && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <RingGauge percent={budgetPct} color={budgetPct > 90 ? 'var(--nogo)' : budgetPct > 70 ? 'var(--caution)' : 'var(--go)'} />
                 <div>
@@ -337,17 +443,19 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
       <div className="section">
         <div className="section-head">
           <div className="small muted">
-            {level === 'red'
+            {warned
+              ? 'The memory estimate says this won\u2019t fit. You can still try; it may fail to load or crash.'
+              : level === 'red'
               ? 'Fix the red items above before launching.'
               : level === 'yellow'
                 ? 'You can launch, but read the yellow notes first.'
-                : 'All clear for your hardware.'}
+                : advice ? 'All clear for your hardware.' : 'Checking configuration…'}
           </div>
           <button
-            className={`launchbtn ${level === 'yellow' ? 'caution' : level === 'red' ? 'nogo' : ''}`}
-            disabled={launching || level === 'red'}
+            className={`launchbtn ${warned ? 'warned' : level === 'yellow' ? 'caution' : level === 'red' ? 'nogo' : ''}`}
+            disabled={launching || configLoading || (level === 'red' && !warned) || !advice}
             onClick={launch}>
-            {launching ? 'Launching…' : level === 'yellow' ? 'Launch anyway' : 'Launch'}
+            {launching ? 'Launching…' : warned ? 'BAD IDEA – YOU HAVE BEEN WARNED' : level === 'yellow' ? 'Launch anyway' : 'Launch'}
           </button>
         </div>
       </div>

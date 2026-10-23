@@ -241,6 +241,7 @@ class OpenWebUIManager:
         port: int = DEFAULT_PORT,
         connect_urls: Optional[List[str]] = None,
         open_browser: bool = True,
+        host: str = "127.0.0.1",
     ) -> Dict[str, Any]:
         """Start Open WebUI, optionally pre-connected to running model endpoints,
         and open the browser once it's ready.
@@ -262,11 +263,6 @@ class OpenWebUIManager:
             return status
         if port_in_use(port):
             port = find_free_port(port)
-        if port_in_use(port):
-            raise RuntimeError(
-                f"Port {port} is already in use by another program. "
-                f"Close it or pick a different port."
-            )
 
         env: Dict[str, str] = {}
         urls = [u for u in (connect_urls or []) if u]
@@ -291,7 +287,7 @@ class OpenWebUIManager:
             engine="openwebui",
             model_label="Open WebUI",
             port=port,
-            argv=[binary, "serve", "--port", str(port)],
+            argv=[binary, "serve", "--host", host, "--port", str(port)],
             env=env,
             log_dir=self.log_dir,
         )

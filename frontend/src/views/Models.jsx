@@ -10,7 +10,9 @@ function InstalledCard({ model, goLaunch }) {
     <div className="modelcard">
       <StatusBadge level={FIT_LEVEL[model.fit] || 'neutral'}>{FIT_TEXT[model.fit] || 'Unknown'}</StatusBadge>
       <div style={{ flex: 1 }}>
-        <div className="title">{model.repo_id}</div>
+        <div className="title">
+          <a href={`https://huggingface.co/${model.repo_id}`} target="_blank" rel="noreferrer">{model.repo_id}</a>
+        </div>
         <div className="meta small muted">
           <StatusBadge>{model.format}</StatusBadge>
           {model.quant && <StatusBadge>{model.quant}</StatusBadge>}
@@ -31,13 +33,15 @@ function DownloadRow({ d }) {
         <span className="mono small">{d.repo_id}{d.filename ? ` · ${d.filename}` : ''}</span>
         {d.status === 'running' && (
           <div className="gpubar" style={{ marginTop: 4 }}>
-            <div className="track"><div className="fill" style={{ width: `${d.percent ?? 0}%` }} /></div>
+            {d.percent == null
+              ? <span className="small muted">Downloading — progress unavailable</span>
+              : <div className="track"><div className="fill" style={{ width: `${d.percent}%` }} /></div>}
           </div>
         )}
         {d.error && <p className="small" style={{ color: 'var(--nogo)' }}>{d.error}</p>}
       </div>
       <span className="mono small muted">
-        {d.status === 'running' ? `${gb(d.bytes_done)} / ${gb(d.bytes_total)} GB` : d.status}
+        {d.status === 'running' ? (d.percent == null ? 'In progress' : `${gb(d.bytes_done)} / ${gb(d.bytes_total)} GB`) : d.status}
       </span>
     </div>
   )
@@ -47,7 +51,9 @@ function SearchResult({ r, onPick, busy }) {
   return (
     <div className="modelcard">
       <div style={{ flex: 1 }}>
-        <div className="title">{r.repo_id}</div>
+        <div className="title">
+          <a href={`https://huggingface.co/${r.repo_id}`} target="_blank" rel="noreferrer">{r.repo_id}</a>
+        </div>
         <div className="meta small muted">
           {r.is_gguf && <StatusBadge>GGUF</StatusBadge>}
           {r.gated && <StatusBadge level="amber">license required</StatusBadge>}
@@ -130,6 +136,7 @@ export default function Models({ goLaunch, notify }) {
   const [searching, setSearching] = useState(false)
   const [pickRepo, setPickRepo] = useState(null)
   const [downloads, setDownloads] = useState([])
+  const completedDownloads = useRef(new Set())
 
   const refreshModels = useCallback(() => {
     api.models().then((r) => setModels(r?.models ?? [])).catch(() => setModels([]))
@@ -142,7 +149,9 @@ export default function Models({ goLaunch, notify }) {
         const r = await api.downloads()
         const list = r?.downloads ?? []
         setDownloads(list)
-        if (list.some((d) => d.status === 'done')) refreshModels()
+        const done = list.filter((d) => d.status === 'done')
+        if (done.some((d) => !completedDownloads.current.has(d.id))) refreshModels()
+        for (const d of done) completedDownloads.current.add(d.id)
       } catch { /* ignore poll errors */ }
     }, 2000)
     return () => clearInterval(t)

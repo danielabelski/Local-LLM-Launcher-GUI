@@ -8,14 +8,25 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ._args import build_args_and_env
+from .placement import normalize_device_ids, validate, wrap
 
 
-def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-    flags, env, extra = build_args_and_env("vllm", config)
+def build(model: Dict[str, Any], config: Dict[str, Any], binary: str = "vllm") -> Dict[str, Any]:
+    validate("vllm-native", config)
+    cfg = {k: v for k, v in config.items() if k != "host"}
+    cfg["device_ids"] = normalize_device_ids(config.get("device_ids"))
+    flags, env, extra = build_args_and_env("vllm", cfg)
+    # GPU numbers everywhere in the launcher (device_ids, an inherited
+    # CUDA_VISIBLE_DEVICES, advice) are nvidia-smi's; CUDA defaults to fastest-first.
+    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     port = int(config.get("port", 8000))
-    argv = ["vllm", "serve", model["repo_id"]] + flags + extra
+    raw_host = config.get("host")
+    host = "127.0.0.1" if raw_host is None else str(raw_host).strip()
+    argv = ([binary, "serve", model["repo_id"]]
+            + (["--host", host] if host else [])
+            + flags + list(config.get("_mtp_args") or ()) + extra)
     return {
-        "argv": argv,
+        "argv": wrap(argv, config),
         "env": env,
         "port": port,
         "health_url": f"http://127.0.0.1:{port}/health",

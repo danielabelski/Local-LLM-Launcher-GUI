@@ -128,7 +128,7 @@
       "label": "Thinking-model format",
       "type": "choice",
       "default": null,
-      "choices": [null, "qwen3", "qwen3-thinking", "deepseek-r1", "deepseek-v3", "glm45", "gpt-oss", "kimi", "step3"],
+      "choices": [null, "auto", "qwen3", "qwen3-thinking", "deepseek-r1", "deepseek-v3", "deepseek-v4", "glm45", "gpt-oss", "kimi", "kimi_k2", "kimi_k3", "step3", "gemma4", "mimo"],
       "category": "essential",
       "help": "For 'thinking' models (ones that reason step-by-step before answering): tells the server how to separate the thinking from the final answer. Pick the one matching your model family, or leave empty for normal models."
     },
@@ -138,7 +138,7 @@
       "label": "Tool-calling format",
       "type": "choice",
       "default": null,
-      "choices": [null, "llama3", "mistral", "qwen", "qwen25", "qwen3_coder", "deepseekv3", "deepseekv31", "glm", "glm45", "pythonic", "step3"],
+      "choices": [null, "auto", "llama3", "mistral", "qwen", "qwen25", "qwen3_coder", "deepseekv3", "deepseekv31", "deepseekv4", "glm", "glm45", "pythonic", "step3", "gemma4", "hermes"],
       "category": "advanced",
       "advanced": true,
       "help": "Lets the model call functions/tools in apps that support it. Pick the parser matching your model family. Leave empty if you just want chat."
@@ -179,11 +179,21 @@
     {
       "key": "enable_multimodal",
       "flag": "--enable-multimodal",
-      "label": "Enable vision/audio processing",
+      "label": "Force vision/audio processing",
       "type": "bool",
       "default": false,
       "category": "performance",
-      "help": "Turn this on if the model can process images or audio and you want to use that feature. Leaving it off for text-only use saves memory."
+      "help": "Usually leave this off: SGLang detects whether a model supports images or audio. Turning it on forces multimodal processing. Off does not force text-only mode."
+    },
+    {
+      "key": "disable_radix_cache",
+      "flag": "--disable-radix-cache",
+      "label": "Disable repeated-prompt cache",
+      "type": "bool",
+      "default": false,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Turn off SGLang's prompt-prefix cache if it causes a model-specific problem. Leaving it enabled makes repeated prompts and long shared instructions faster."
     },
     {
       "key": "served_model_name",

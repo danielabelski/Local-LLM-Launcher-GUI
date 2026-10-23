@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import socket
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .engines import llamacpp, sglang, vllm_docker, vllm_native
+from .engines import llamacpp, mtp, sglang, tgi, vllm_backends, vllm_docker, vllm_native
 from .engines.base import LocalServer
+from . import catalog
 
-APP_DIR = Path.home() / ".local-llm-launcher"
+APP_DIR = Path(os.environ.get("LOCAL_LLM_LAUNCHER_HOME") or Path.home() / ".local-llm-launcher").expanduser()
 
 
 def port_in_use(port: int) -> bool:
@@ -18,16 +23,27 @@ def port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def find_free_port(preferred: int, max_tries: int = 100) -> int:
+def find_free_port(preferred: int, max_tries: int = 100,
+                   reserved: Optional[set[int]] = None) -> int:
     """Return `preferred` if free, otherwise the next free port above it."""
     port = preferred
     for _ in range(max_tries):
-        if not port_in_use(port):
+        if port not in (reserved or ()) and not port_in_use(port):
             return port
         port += 1
     raise RuntimeError(
         f"No free port found starting from {preferred} (checked {max_tries} ports)."
     )
+
+
+def _watchdog_minutes(engine_mode: str, config: Dict[str, Any]) -> int:
+    """The freeze watchdog covers llama.cpp only (vLLM has no /slots)."""
+    if engine_mode != "llamacpp":
+        return 0
+    value = config.get("watchdog_minutes")
+    if value is None:
+        value = catalog.defaults("llamacpp").get("watchdog_minutes", 0)
+    return max(int(value), 0)
 
 
 class ServerManager:
@@ -36,6 +52,9 @@ class ServerManager:
         self.log_dir = self.app_dir / "logs"
         self.state_file = self.app_dir / "servers.json"
         self.app_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._lifecycle_locks: Dict[str, threading.Lock] = {}
+        self._stopping: set[str] = set()
         self.servers: Dict[str, LocalServer] = {}
         self._reload()
 
@@ -57,73 +76,181 @@ class ServerManager:
             self.servers[srv.server_id] = srv
 
     def _save(self) -> None:
-        records = [s.to_record() for s in self.servers.values()]
-        tmp = self.state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(records, indent=2))
-        tmp.replace(self.state_file)
+        with self._lock:
+            records = [s.to_record() for s in self.servers.values()]
+            tmp = self.state_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(records, indent=2))
+            tmp.replace(self.state_file)
 
     # ------------------------------------------------------------------- launch
 
     def build_spec(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
-                   llamacpp_binary: Optional[str] = None) -> Dict[str, Any]:
+                   llamacpp_binary: Optional[str] = None, vllm_binary: Optional[str] = None) -> Dict[str, Any]:
         if engine_mode == "vllm-native":
-            return vllm_native.build(model, config)
+            return vllm_native.build(model, config, binary=vllm_binary or "vllm")
         if engine_mode == "vllm-docker":
             return vllm_docker.build(model, config)
         if engine_mode == "llamacpp":
             return llamacpp.build(model, config, binary=llamacpp_binary or "llama-server")
         if engine_mode == "sglang":
             return sglang.build(model, config)
+        if engine_mode == "tgi":
+            return tgi.build(model, config)
         raise ValueError(f"Unknown engine mode '{engine_mode}'")
 
     def launch(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
-               llamacpp_binary: Optional[str] = None) -> LocalServer:
-        spec = self.build_spec(engine_mode, model, config, llamacpp_binary)
-        if port_in_use(spec["port"]):
-            spec["port"] = find_free_port(spec["port"])
-        srv = LocalServer(
-            server_id=uuid.uuid4().hex[:12],
-            engine=engine_mode,
-            model_label=model["repo_id"],
-            port=spec["port"],
-            argv=spec["argv"],
-            env=spec.get("env") or {},
-            log_dir=self.log_dir,
-            container_name=spec.get("container_name"),
-        )
-        if not srv.start():
-            raise RuntimeError("The server process failed to start. Check the logs for details.")
-        self.servers[srv.server_id] = srv
-        self._save()
+               llamacpp_binary: Optional[str] = None, vllm_binary: Optional[str] = None,
+               hardware: Optional[Dict[str, Any]] = None) -> LocalServer:
+        # Validate before taking the lock: probing the vLLM runtime can take many
+        # seconds, and status polling, logs and stop all need this lock.
+        vllm_backends.validate(engine_mode, model, config, hardware, vllm_binary or "vllm")
+        config = dict(config)
+        if engine_mode == "llamacpp" and model.get("gguf_files"):
+            selected_path = llamacpp.pick_gguf_path(model, config)
+            config["gguf_file"] = next(f["filename"] for f in model["gguf_files"]
+                                       if f["path"] == selected_path)
+        if config.get("use_mtp") and engine_mode in ("llamacpp", "vllm-native", "vllm-docker"):
+            decision = mtp.resolve(engine_mode, model, config, vllm_binary=vllm_binary or "vllm",
+                                   llama_binary=llamacpp_binary or "llama-server")
+            if decision["level"] == "red":
+                raise ValueError(decision["message"])
+            config["_mtp_args"] = decision["args"]
+        with self._lock:
+            # Reserve the port before building/spawning: a new process may not
+            # listen yet when another launch arrives.
+            catalog_engine = "vllm" if engine_mode.startswith("vllm") else engine_mode
+            default_port = catalog.defaults(catalog_engine)["port"]
+            reserved = {s.port for s in self.servers.values()
+                        if s.server_id in self._stopping or s.is_running()}
+            config["port"] = find_free_port(int(config.get("port", default_port)),
+                                            reserved=reserved)
+            spec = self.build_spec(engine_mode, model, config, llamacpp_binary, vllm_binary)
+            srv = LocalServer(
+                server_id=uuid.uuid4().hex[:12],
+                engine=engine_mode,
+                model_label=model["repo_id"],
+                port=spec["port"],
+                argv=spec["argv"],
+                env=spec.get("env") or {},
+                log_dir=self.log_dir,
+                container_name=spec.get("container_name"),
+                env_file=spec.get("env_file"),
+                watchdog_minutes=_watchdog_minutes(engine_mode, config),
+                config=config,
+            )
+            started = srv.start()
+            if not started:
+                srv._cleanup_env_file()
+            self.servers[srv.server_id] = srv
+            self._save()
+            if not started:
+                raise RuntimeError("The server process failed to start. Check the logs for details.")
         return srv
 
     # ------------------------------------------------------------------ queries
 
     def list(self) -> List[Dict[str, Any]]:
-        return [s.status() for s in self.servers.values()]
+        with self._lock:
+            return [s.status() for s in self.servers.values()]
 
     def get(self, server_id: str) -> Optional[LocalServer]:
-        return self.servers.get(server_id)
+        with self._lock:
+            return self.servers.get(server_id)
+
+    def record_load_status(self, server_id: str, load_status: str) -> None:
+        with self._lock:
+            srv = self.servers.get(server_id)
+            if srv is None or srv.load_status == load_status:
+                return
+            srv.load_status = load_status
+            try:
+                self._save()
+            except OSError:
+                logging.getLogger(__name__).warning("Could not persist the observed model load status.")
+
+    def _shutdown(self, server_id: str, *, remove: bool = False) -> bool:
+        with self._lock:
+            srv = self.servers.get(server_id)
+            if not srv:
+                return False
+            lifecycle_lock = self._lifecycle_locks.setdefault(server_id, threading.Lock())
+
+        # Waiting for a process (or another shutdown of this server) must not
+        # block queries, launches, or lifecycle operations on other servers.
+        with lifecycle_lock:
+            with self._lock:
+                if self.servers.get(server_id) is not srv:
+                    return False  # a preceding remove already finished
+                self._stopping.add(server_id)
+            try:
+                if remove and not srv.is_running():
+                    srv._cleanup_env_file()
+                    ok = True
+                else:
+                    ok = srv.stop()
+                if ok and not srv.is_running() and srv.load_status == "loading":
+                    # Explicit cancellation does not prove a failed model load.
+                    srv.load_status = "unknown"
+                if remove:
+                    ok = ok and not srv.is_running()
+                    if ok:
+                        with self._lock:
+                            del self.servers[server_id]
+                            del self._lifecycle_locks[server_id]
+                return ok
+            finally:
+                with self._lock:
+                    self._stopping.discard(server_id)
+                    self._save()
 
     def stop(self, server_id: str) -> bool:
-        srv = self.servers.get(server_id)
-        if not srv:
-            return False
-        ok = srv.stop()
-        self._save()
-        return ok
+        return self._shutdown(server_id)
 
     def remove(self, server_id: str) -> bool:
-        srv = self.servers.pop(server_id, None)
-        if not srv:
-            return False
-        if srv.is_running():
-            srv.stop()
-        self._save()
-        return True
+        return self._shutdown(server_id, remove=True)
+
+    # ----------------------------------------------------------------- watchdog
+
+    def watchdog_tick(self, now: Optional[float] = None) -> List[str]:
+        """Stop servers whose work loop has been frozen for their set minutes.
+
+        Returns the ids stopped. A frozen llama-server keeps accepting requests and
+        never answers them, and nothing else ever stops it.
+        """
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            watched = [s for s in self.servers.values() if s.watchdog_minutes > 0]
+        stopped = []
+        for srv in watched:
+            if not srv.is_running() or srv.probe() != "stuck":
+                srv.stuck_since = None
+                continue
+            if srv.stuck_since is None:
+                srv.stuck_since = now
+            elif now - srv.stuck_since >= srv.watchdog_minutes * 60:
+                minutes = f"{srv.watchdog_minutes} minute{'s' if srv.watchdog_minutes != 1 else ''}"
+                srv.note(f"watchdog: the server accepted requests but did no work for "
+                         f"{minutes}, so the launcher stopped it.")
+                srv.stuck_since = None
+                if self.stop(srv.server_id):
+                    stopped.append(srv.server_id)
+        return stopped
+
+    def start_watchdog(self, interval: float = 30.0) -> threading.Thread:
+        def loop() -> None:
+            while True:
+                time.sleep(interval)
+                try:
+                    self.watchdog_tick()
+                except Exception:  # noqa: BLE001 - the watchdog must outlive one bad probe
+                    pass
+
+        thread = threading.Thread(target=loop, name="server-watchdog", daemon=True)
+        thread.start()
+        return thread
 
     def stop_all(self) -> None:
-        for srv in self.servers.values():
-            if srv.is_running():
-                srv.stop()
-        self._save()
+        with self._lock:
+            server_ids = list(self.servers)
+        for server_id in server_ids:
+            self.stop(server_id)

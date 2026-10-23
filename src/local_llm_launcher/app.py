@@ -1,18 +1,26 @@
 """FastAPI application: API routes + the built frontend."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from importlib import resources
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
 
 
-def create_app() -> FastAPI:
+def create_app(extra_allowed_hosts: Iterable[str] = ()) -> FastAPI:
     app = FastAPI(title="Local-LLM-Launcher-GUI")
+    # DNS-rebinding protection: only loopback hosts may reach the API, plus
+    # exact names the operator opts into (e.g. a `tailscale serve` address).
+    extra = [host.strip().lower() for host in extra_allowed_hosts]
+    if any(not host or "*" in host for host in extra):
+        raise ValueError("allowed hosts must be exact names; wildcards are refused")
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", *extra])
     app.include_router(router)
 
     static_dir = Path(str(resources.files("local_llm_launcher") / "static"))
@@ -23,6 +31,8 @@ def create_app() -> FastAPI:
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         if index.is_file():
             return FileResponse(index)
         return JSONResponse(

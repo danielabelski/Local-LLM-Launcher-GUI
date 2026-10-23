@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
+import psutil
+
+from .. import catalog
 
 
 class LocalServer:
@@ -31,7 +34,16 @@ class LocalServer:
         pid: Optional[int] = None,
         started_at: Optional[str] = None,
         log_path: Optional[str] = None,
+        pid_create_time: Optional[float] = None,
+        env_file: Optional[str] = None,
+        watchdog_minutes: int = 0,
+        config: Optional[Dict[str, Any]] = None,
+        config_save_error: Optional[str] = None,
+        load_status: str = "unknown",
     ) -> None:
+        self.config, sanitization_error = catalog.safe_launch_config(engine, config) if config is not None else (None, None)
+        self.config_save_error = config_save_error or sanitization_error
+        self.load_status = load_status if load_status in ("unknown", "loading", "successful", "failed") else "unknown"
         self.server_id = server_id
         self.engine = engine
         self.model_label = model_label
@@ -41,7 +53,12 @@ class LocalServer:
         self.container_name = container_name
         self.process: Optional[subprocess.Popen] = None
         self.pid = pid
+        self.pid_create_time = pid_create_time
         self.started_at = started_at
+        self.env_file = Path(env_file) if env_file else None
+        # Minutes a frozen server may stay stuck before the watchdog stops it (0 = off).
+        self.watchdog_minutes = watchdog_minutes
+        self.stuck_since: Optional[float] = None
         log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         if log_path:
@@ -49,7 +66,7 @@ class LocalServer:
         else:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             safe = model_label.replace("/", "_")
-            self.log_path = log_dir / f"{engine}_{safe}_{stamp}.log"
+            self.log_path = log_dir / f"{engine}_{safe}_{stamp}_{server_id}.log"
 
     # ------------------------------------------------------------------ control
 
@@ -58,6 +75,7 @@ class LocalServer:
             return False
         env = os.environ.copy()
         env.update(self.env)
+        self.load_status = "loading"
         try:
             with open(self.log_path, "ab") as log_file:
                 log_file.write(
@@ -73,9 +91,14 @@ class LocalServer:
             )
             log_handle.close()  # child keeps its own descriptor
             self.pid = self.process.pid
+            try:
+                self.pid_create_time = psutil.Process(self.pid).create_time()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                self.pid_create_time = None
             self.started_at = datetime.now(timezone.utc).isoformat()
             return True
         except (OSError, subprocess.SubprocessError) as e:
+            self.load_status = "failed"
             with open(self.log_path, "ab") as log_file:
                 log_file.write(f"[launcher] failed to start: {e}\n".encode())
             return False
@@ -89,6 +112,9 @@ class LocalServer:
             except (OSError, subprocess.SubprocessError):
                 pass
         pid = self.process.pid if self.process else self.pid
+        if self.process is None and self.pid_create_time is not None and not self._pid_matches():
+            self._cleanup_env_file()
+            return True  # pid was recycled; never kill an innocent process
         if pid:
             try:
                 os.killpg(pid, signal.SIGTERM)
@@ -100,6 +126,7 @@ class LocalServer:
             deadline = time.time() + timeout
             while time.time() < deadline:
                 if not self.is_running():
+                    self._cleanup_env_file()
                     return True
                 time.sleep(0.2)
             try:
@@ -107,7 +134,17 @@ class LocalServer:
             except (ProcessLookupError, PermissionError, OSError):
                 pass
             time.sleep(0.3)
+        if not self.is_running():
+            self._cleanup_env_file()
         return not self.is_running()
+
+    def _cleanup_env_file(self) -> None:
+        """Remove the temp env file (HF token for docker) once the server is gone."""
+        if self.env_file:
+            try:
+                self.env_file.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------- status
 
@@ -115,12 +152,21 @@ class LocalServer:
         if self.process is not None:
             return self.process.poll() is None
         if self.pid:
+            if self.pid_create_time is not None and not self._pid_matches():
+                return False  # pid recycled by an unrelated process
             try:
                 os.kill(self.pid, 0)
                 return True
             except (ProcessLookupError, PermissionError, OSError):
                 return False
         return False
+
+    def _pid_matches(self) -> bool:
+        """True only when the live process at self.pid has our stored start time."""
+        try:
+            return abs(psutil.Process(self.pid).create_time() - self.pid_create_time) < 1.0
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
 
     def exit_code(self) -> Optional[int]:
         if self.process is not None:
@@ -134,6 +180,9 @@ class LocalServer:
             "engine": self.engine,
             "model": self.model_label,
             "port": self.port,
+            "config": self.config,
+            "config_save_error": self.config_save_error,
+            "load_status": self.load_status,
             "running": running,
             "pid": self.pid,
             "started_at": self.started_at,
@@ -148,6 +197,34 @@ class LocalServer:
             return r.status_code == 200
         except httpx.HTTPError:
             return False
+
+    def probe(self) -> str:
+        """'ok', 'loading' (not answering yet, or answering 503), or 'stuck'.
+
+        llama-server answers /health without its work loop, but /slots is queued on
+        that loop. Any answer at all means the loop is alive; a request accepted and
+        never answered means it froze. A refused connection is a server still loading.
+        """
+        base = f"http://127.0.0.1:{self.port}"
+        try:
+            if httpx.get(f"{base}/health", timeout=10.0).status_code != 200:
+                return "loading"
+            # Generous: the loop answers between micro-batches, and one micro-batch can
+            # take most of a minute when llama.cpp has moved layers to the CPU.
+            httpx.get(f"{base}/slots", timeout=60.0)
+            return "ok"
+        except httpx.TimeoutException:
+            return "stuck"
+        except httpx.HTTPError:
+            return "loading"
+
+    def note(self, text: str) -> None:
+        """Append a launcher line to the server's log."""
+        try:
+            with open(self.log_path, "ab") as log_file:
+                log_file.write(f"[launcher] {datetime.now().isoformat()} {text}\n".encode())
+        except OSError:
+            pass
 
     def tail_logs(self, n: int = 100) -> List[str]:
         try:
@@ -169,12 +246,18 @@ class LocalServer:
             "engine": self.engine,
             "model_label": self.model_label,
             "port": self.port,
+            "config": self.config,
+            "config_save_error": self.config_save_error,
+            "load_status": self.load_status,
             "argv": self.argv,
             "env_keys": sorted(self.env.keys()),  # never persist env values (tokens)
             "container_name": self.container_name,
             "pid": self.pid,
+            "pid_create_time": self.pid_create_time,
             "started_at": self.started_at,
             "log_path": str(self.log_path),
+            "env_file": str(self.env_file) if self.env_file else None,
+            "watchdog_minutes": self.watchdog_minutes,
         }
 
     @classmethod
@@ -191,4 +274,10 @@ class LocalServer:
             pid=record.get("pid"),
             started_at=record.get("started_at"),
             log_path=record.get("log_path"),
+            pid_create_time=record.get("pid_create_time"),
+            env_file=record.get("env_file"),
+            watchdog_minutes=int(record.get("watchdog_minutes") or 0),
+            config=record.get("config"),
+            config_save_error=record.get("config_save_error"),
+            load_status=record.get("load_status", "unknown"),
         )
