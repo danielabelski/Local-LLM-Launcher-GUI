@@ -6,6 +6,8 @@ and LocalModel.to_dict()) so it is easy to call from the API layer.
 import json
 import struct
 
+import pytest
+
 from local_llm_launcher import advisor
 
 GB = 1024**3
@@ -19,19 +21,20 @@ DUAL_GPU_16GB = {
     ],
     "apple_silicon": None, "cpu_cores": 24, "ram_gb": 31.0, "disk_free_gb": 500.0,
     "total_vram_mb": 32622,
-    "engines": {"vllm_native": True, "vllm_docker": True, "llamacpp_path": "/usr/local/bin/llama-server"},
+    "engines": {"vllm_native": True, "vllm_docker": True, "llamacpp_path": "/usr/local/bin/llama-server", "sglang": False},
 }
+DUAL_5060TI = DUAL_GPU_16GB
 
 APPLE_M3 = {
     "gpus": [], "apple_silicon": {"chip": "Apple M3 Pro", "memory_gb": 36},
     "cpu_cores": 12, "ram_gb": 36.0, "disk_free_gb": 500.0, "total_vram_mb": 0,
-    "engines": {"vllm_native": False, "vllm_docker": False, "llamacpp_path": "/opt/homebrew/bin/llama-server"},
+    "engines": {"vllm_native": False, "vllm_docker": False, "llamacpp_path": "/opt/homebrew/bin/llama-server", "sglang": False},
 }
 
 CPU_ONLY = {
     "gpus": [], "apple_silicon": None, "cpu_cores": 8, "ram_gb": 16.0,
     "disk_free_gb": 100.0, "total_vram_mb": 0,
-    "engines": {"vllm_native": False, "vllm_docker": False, "llamacpp_path": "/usr/bin/llama-server"},
+    "engines": {"vllm_native": False, "vllm_docker": False, "llamacpp_path": "/usr/bin/llama-server", "sglang": False},
 }
 
 
@@ -486,6 +489,151 @@ def test_no_kv_offload_false_has_no_flag():
                        {"n_gpu_layers": 999, "ctx_size": 8192, "no_kv_offload": False},
                        DUAL_GPU_16GB)
     assert "no_kv_offload" not in a["flags"]
+
+
+# ========================================================================= SGLang
+
+def test_sglang_small_model_fits_green():
+    a = advisor.advise("sglang", safetensors_model(size_gb=8.0, params=8.0),
+                       {"tensor_parallel_size": 2, "mem_fraction_static": 0.88},
+                       DUAL_5060TI)
+    assert a["overall"]["level"] == "green"
+    assert a["budget"]["available_gb"] > 0
+
+
+def test_sglang_huge_model_red():
+    a = advisor.advise("sglang", safetensors_model(size_gb=70.0, params=70.0, quant=None),
+                       {"tensor_parallel_size": 2, "mem_fraction_static": 0.88}, DUAL_5060TI)
+    assert a["overall"]["level"] == "red"
+
+
+@pytest.mark.parametrize("kv_cache_dtype", ["fp8_e5m2", "fp8_e4m3"])
+def test_sglang_fp8_cache_crosses_fit_boundary(kv_cache_dtype):
+    hw = {**DUAL_GPU_16GB, "gpus": [{
+        **DUAL_GPU_16GB["gpus"][0], "vram_total_mb": 16384, "vram_free_mb": 16000,
+    }]}
+    model = safetensors_model(size_gb=10.4, params=7.0, quant=None)
+    config = {"context_length": 8192, "mem_fraction_static": 0.88,
+              "max_running_requests": 2}
+    default = advisor.advise("sglang", model, config, hw)
+    fp8 = advisor.advise("sglang", model, {**config, "kv_cache_dtype": kv_cache_dtype}, hw)
+
+    assert default["overall"]["level"] == "red"
+    assert fp8["overall"]["level"] == "yellow"
+    assert fp8["budget"]["kv_cache_gb"] == pytest.approx(default["budget"]["kv_cache_gb"] / 2)
+
+
+def test_sglang_gguf_is_red():
+    a = advisor.advise("sglang", gguf_model(), {"tensor_parallel_size": 1}, DUAL_5060TI)
+    assert a["overall"]["level"] == "red"
+    assert "llama.cpp" in a["overall"]["headline"]
+
+
+def test_sglang_on_apple_silicon_red():
+    a = advisor.advise("sglang", safetensors_model(size_gb=4.0, params=7.0), {}, APPLE_M3)
+    assert a["overall"]["level"] == "red"
+
+
+def test_sglang_no_gpu_red():
+    a = advisor.advise("sglang", safetensors_model(size_gb=4.0, params=7.0), {}, CPU_ONLY)
+    assert a["overall"]["level"] == "red"
+
+
+def test_sglang_tp_exceeds_gpus_red():
+    a = advisor.advise("sglang", safetensors_model(size_gb=4.0, params=7.0),
+                       {"tensor_parallel_size": 4}, DUAL_5060TI)
+    assert a["flags"]["tensor_parallel_size"]["level"] == "red"
+
+
+def test_sglang_quantization_override_yellow():
+    a = advisor.advise("sglang", safetensors_model(size_gb=8.0, params=8.0),
+                       {"tensor_parallel_size": 2, "quantization": "awq"}, DUAL_5060TI)
+    assert a["flags"]["quantization"]["level"] == "yellow"
+
+
+def test_sglang_reasoning_parser_family_mismatch_red():
+    a = advisor.advise("sglang", safetensors_model(size_gb=4.0, params=7.0),
+                       {"reasoning_parser": "qwen3"},
+                       DUAL_5060TI)
+    # Model repo_id is "test/model" — no family detected, so qwen3 is just a yellow "unconfirmed"
+    assert a["flags"]["reasoning_parser"]["level"] == "yellow"
+
+
+def test_sglang_reasoning_parser_qwen3_on_qwen3_model():
+    model = safetensors_model(size_gb=4.0, params=7.0)
+    model["repo_id"] = "unsloth/Qwen3-1.7B"
+    a = advisor.advise("sglang", model,
+                       {"reasoning_parser": "qwen3", "tensor_parallel_size": 1}, DUAL_5060TI)
+    # Correct parser for the family — no flag at all
+    assert "reasoning_parser" not in a["flags"]
+
+
+def test_sglang_auto_parser_does_not_warn_about_family_mismatch():
+    model = safetensors_model(size_gb=4.0, params=7.0)
+    model["repo_id"] = "unsloth/Qwen3-1.7B"
+    advice = advisor.advise("sglang", model, {"reasoning_parser": "auto"}, DUAL_GPU_16GB)
+    assert advice["flags"].get("reasoning_parser", {}).get("level") != "red"
+
+
+def test_sglang_reasoning_parser_wrong_for_model_red():
+    model = safetensors_model(size_gb=4.0, params=7.0)
+    model["repo_id"] = "unsloth/Qwen3-1.7B"
+    a = advisor.advise("sglang", model,
+                       {"reasoning_parser": "deepseek-r1", "tensor_parallel_size": 1}, DUAL_5060TI)
+    assert a["flags"]["reasoning_parser"]["level"] == "red"
+
+
+def test_sglang_deepseek_r1_parser_normalized():
+    """deepseek-r1 (hyphen) should match deepseek_r1 (underscore) — no false RED flag."""
+    model = safetensors_model(size_gb=4.0, params=7.0)
+    model["repo_id"] = "deepseek-ai/DeepSeek-R1"
+    a = advisor.advise("sglang", model,
+                       {"reasoning_parser": "deepseek-r1", "tensor_parallel_size": 1}, DUAL_5060TI)
+    # Should NOT be red — the hyphen/underscore difference is a naming convention, not a mismatch
+    if "reasoning_parser" in a["flags"]:
+        assert a["flags"]["reasoning_parser"]["level"] != "red"
+
+
+def test_sglang_presets():
+    presets = advisor.presets("sglang", safetensors_model(size_gb=8.0, params=8.0), DUAL_5060TI)
+    names = [p["name"] for p in presets]
+    assert "Safe (recommended)" in names
+    assert "Max context" in names
+    assert "Max speed" in names
+    assert "Tight fit" in names
+
+
+def test_tgi_fit_advice_blocks_gguf_and_invalid_context():
+    assert advisor.advise("tgi", gguf_model(), {}, DUAL_GPU_16GB)["overall"]["level"] == "red"
+    advice = advisor.advise("tgi", safetensors_model(size_gb=8, params=8),
+                            {"max_input_tokens": 4096, "max_total_tokens": 4096}, DUAL_GPU_16GB)
+    assert advice["flags"]["max_input_tokens"]["level"] == "red"
+    assert advice["overall"].get("override") is not True
+
+
+def test_tgi_fit_uses_selected_gpu_free_memory():
+    hw = {**DUAL_GPU_16GB, "gpus": [
+        {**DUAL_GPU_16GB["gpus"][0], "vram_free_mb": 1000},
+        {**DUAL_GPU_16GB["gpus"][1], "vram_free_mb": 8000},
+    ]}
+    advice = advisor.advise("tgi", safetensors_model(size_gb=2, params=2),
+                            {"device_ids": "1", "num_shard": 1, "cuda_memory_fraction": 0.9}, hw)
+    assert advice["budget"]["available_gb"] == round(8000 / 1024, 1)
+
+
+@pytest.mark.parametrize("kv_cache_dtype", ["fp8_e4m3fn", "fp8_e5m2"])
+def test_tgi_fp8_cache_crosses_fit_boundary(kv_cache_dtype):
+    hw = {**DUAL_GPU_16GB, "gpus": [{
+        **DUAL_GPU_16GB["gpus"][0], "vram_total_mb": 16384, "vram_free_mb": 16000,
+    }]}
+    model = safetensors_model(size_gb=10.4, params=7.0, quant=None)
+    config = {"max_total_tokens": 8192, "cuda_memory_fraction": 0.9}
+    default = advisor.advise("tgi", model, config, hw)
+    fp8 = advisor.advise("tgi", model, {**config, "kv_cache_dtype": kv_cache_dtype}, hw)
+
+    assert default["overall"]["level"] == "red"
+    assert fp8["overall"]["level"] == "yellow"
+    assert fp8["budget"]["kv_cache_gb"] == pytest.approx(default["budget"]["kv_cache_gb"] / 2)
 
 
 def test_selected_gpus_follow_inherited_mask_when_device_ids_unset():

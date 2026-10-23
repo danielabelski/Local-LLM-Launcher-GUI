@@ -35,12 +35,12 @@ def validate(engine, config, numa=None):
     if host is not None and (not isinstance(host, str) or any(ch.isspace() for ch in host.strip())):
         raise ValueError('Enter a valid listen address without spaces, such as 127.0.0.1 or 0.0.0.0.')
     if config.get('numactl_interleave'):
-        if engine == 'vllm-docker':
+        if engine in ('vllm-docker', 'tgi'):
             raise ValueError('Memory interleaving supports native engines only; turn it off for Docker.')
         numa = numa if numa is not None else hardware.detect_numa()
         if not numa.get('linux') or not numa.get('numactl_path'):
             raise ValueError('Memory interleaving requires Linux and numactl installed on PATH.')
-    if engine.startswith('vllm'):
+    if engine.startswith('vllm') or engine in ('sglang', 'tgi'):
         normalize_device_ids(config.get('device_ids'))
     if engine != 'llamacpp':
         return

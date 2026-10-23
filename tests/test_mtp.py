@@ -206,7 +206,8 @@ def test_help_and_version_probe_real_output_formats(tmp_path, monkeypatch):
     binary = tmp_path / 'llama-server'
     binary.write_text('x')
     hardware._llama_capabilities_cached.cache_clear()
-    assert hardware.llama_capabilities(str(binary)) | {'devices': []} == {'load_mode': False, 'devices': [], 'mtp': True, 'build': 11235}
+    assert hardware.llama_capabilities(str(binary)) == {'load_mode': False, 'devices': [], 'mtp': True, 'build': 11235,
+        'server_options': {'system_prompt': False, 'system_prompt_file': False, 'color': False}}
     outputs['--help'] = ('--spec-type none,draft-simple,draft-eagle3,ngram-simple\n', '')
     outputs['--version'] = ('', 'version: 9131 (634275f)\n')
     binary.write_text('older')

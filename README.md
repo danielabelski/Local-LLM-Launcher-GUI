@@ -19,9 +19,10 @@
 
 A friendly, browser-based control panel for downloading and running large
 language models ("LLMs" — the AI models behind chatbots like ChatGPT, except
-running on **your own computer**) using **vLLM** or **llama.cpp**. Built for
-people who don't want to memorize cryptic command-line flags or spend an
-afternoon guessing why a model won't load.
+running on **your own computer**) using **vLLM**, **llama.cpp**, **SGLang**, or
+**Hugging Face TGI**.
+Built for people who don't want to memorize cryptic command-line flags or spend
+an afternoon guessing why a model won't load.
 
 Every setting is rated 🟢 / 🟡 / 🔴 (green / yellow / red) **against your
 actual computer and the model you picked**, with a one-or-two-sentence
@@ -31,12 +32,11 @@ the error into something you can actually act on.
 
 ![Dashboard screenshot](docs/images/dashboard.png)
 
-> **Experimental: SGLang support.** An
-> [`experimental/sglang-integration`](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/tree/experimental/sglang-integration)
-> branch adds [SGLang](https://github.com/sgl-project/sglang) as a fourth
-> engine. It is **unstable** — upstream bugs in `apache-tvm-ffi` cause
-> processor loading failures and JIT crashes, especially on some NVIDIA GPU configurations. Testing only; vLLM and llama.cpp remain the reliable
-> options.
+> **Experimental branch:** SGLang and TGI support live on
+> [`experimental/sglang-integration`](https://github.com/jimdawdy-hub/Local-LLM-Launcher-GUI/tree/experimental/sglang-integration).
+> The branch is launcher v0.6.0. SGLang options were checked against
+> v0.5.22, but a live model run still depends on your GPU and installed packages.
+> Hugging Face archived TGI in March 2026; its final release is v3.3.7.
 
 ---
 
@@ -57,15 +57,25 @@ the error into something you can actually act on.
    - **[vLLM](https://docs.vllm.ai)** — faster for NVIDIA GPUs, uses
      HuggingFace-format models. Install via `pip install vllm` or use their
      Docker image.
+   - **[SGLang](https://github.com/sgl-project/sglang)** — high-performance
+     serving with RadixAttention prefix caching and structured generation.
+     Great for agents and repeated prompts. Version 0.5.22 requires Python 3.11
+     or newer; install it in the same Python environment as the launcher. On
+     Linux, first GPU launch may also need a matching CUDA toolkit, a C++
+     compiler, and Ninja for JIT kernels.
+   - **[Hugging Face TGI](https://github.com/huggingface/text-generation-inference)** —
+     an archived inference server for Hugging Face models. Requires Docker and
+     an NVIDIA GPU (Podman's Docker command wrapper also works). Pull its final image with
+     `docker pull ghcr.io/huggingface/text-generation-inference:3.3.7`.
 
    Don't worry too much about choosing — the app detects what you have
    installed and tells you what's missing, with instructions, on the
-   **Settings** page.
+  **Settings** page.
 
-The Dashboard shows each installed llama.cpp and vLLM version beside GitHub's
-latest stable release. llama.cpp nightly builds include a separate build number,
-which may advance between stable releases. If GitHub is unavailable, the
-installed version still appears.
+The Dashboard reads each installed engine's version and checks GitHub's latest
+stable release. llama.cpp nightly builds include a separate build number, which
+may advance between stable releases. If GitHub is unavailable, the installed
+version still appears.
 
 ## Getting it running
 
@@ -150,8 +160,8 @@ repeated. Engine source updates stay available only from the computer itself.
 ## Using it — the short version
 
 1. **Dashboard** — confirms the app can see your hardware (GPU, memory) and
-   which engines (vLLM / llama.cpp) it found, with installed and latest release
-   versions. There's also a one-click
+   which engines it found, with installed and latest GitHub release versions.
+   There's also a one-click
    launcher for **[Open WebUI](https://github.com/open-webui/open-webui)** — a
    polished chat interface — right under "Running now." If it's not installed,
    the button is greyed out with the install command ready to copy; if it is,
@@ -290,6 +300,97 @@ the second — loading successfully and then refusing to start. The app checks
 second" scenario shows up as a yellow warning with a fix (shorter context,
 more memory headroom, or compression) instead of a 10-15 minute wait followed
 by a cryptic error.
+
+## Troubleshooting
+
+### SGLang crashes on startup with a TVM / ROCm error (NVIDIA Blackwell GPUs)
+
+On older SGLang installations, an RTX 5060 Ti or another Blackwell-generation
+GPU (SM120) could crash during startup with `_get_rocm_target`, `tvm_ffi`, or
+"Could not detect ROCm GPU architecture". First update to SGLang v0.5.22.
+If the same error persists, try this workaround:
+
+**Quick fix:** In the **Launch** page, expand **Advanced** and paste this into
+the **Extra raw flags** field:
+
+```
+--attention-backend triton --sampling-backend pytorch
+```
+
+This selects Triton attention and PyTorch sampling. It may avoid the JIT path
+that failed in older versions; compare speed and inspect the log after launch.
+
+SGLang v0.5.22 still compiles CUDA kernels on first launch. If its log says
+`Failed to find C compiler`, `No such file or directory: 'ninja'`, or
+`cannot find -lcudart`, install matching CUDA development files and C++/Ninja
+build tools, then set `CUDA_HOME` to the toolkit directory before starting the
+launcher. CUDA runtime libraries alone are insufficient for this JIT step.
+
+SGLang v0.5.22 prints its server arguments to its log, including `--api-key`.
+The launcher therefore rejects SGLang API keys; keep its endpoint on localhost
+or protect LAN access with an external authenticated proxy.
+
+### SGLang fails to install (dependency conflict)
+
+SGLang depends on `apache-tvm-ffi`, which comes in pre-release versions. If
+`pip install 'sglang==0.5.22'` fails with a version resolution error, try:
+
+```bash
+pip install --pre 'sglang==0.5.22'
+```
+
+Or if you use `uv` (faster package installer):
+
+```bash
+pip install uv
+uv pip install --prerelease=allow 'sglang==0.5.22'
+```
+
+### SGLang segfaults or gives dtype errors after an update
+
+The `tvm-ffi` package occasionally changes its internal type codes between
+versions. If you updated SGLang but not its sub-dependencies (like
+`flashinfer-python` or `xgrammar`), the old compiled kernels won't match the
+new FFI interface. Fix by reinstalling everything together:
+
+```bash
+pip install --upgrade --force-reinstall sglang flashinfer-python xgrammar
+```
+
+### Model loads but then refuses to start (KV cache error)
+
+SGLang (like vLLM) checks memory in two steps: first it loads the model
+weights, then it reserves conversation memory (the "KV cache"). A model can
+pass the first check and fail the second. The app catches this before you
+launch and shows a yellow warning with a fix — usually: shorten the context
+window, lower the GPU memory usage limit, or enable KV cache compression
+(`fp8_e4m3`). If you're launching outside the app, try adding:
+
+```
+--kv-cache-dtype fp8_e4m3 --chunked-prefill-size 2048
+```
+
+### The app says "SGLang is not installed" but you installed it
+
+SGLang must be installed in the same Python environment the app is running
+in. If you installed SGLang in one terminal but launched the app from a
+different virtual environment, the app can't see it. Make sure both use the
+same `.venv`:
+
+```bash
+source .venv/bin/activate
+pip install 'sglang==0.5.22'
+```
+
+### General: a launch fails and the error is cryptic
+
+The **Servers** page translates common engine errors into plain language. If
+the error isn't covered, check the raw log (click the log panel on the
+Servers page) and search for the key phrase on the engine's GitHub issues:
+
+- **SGLang:** https://github.com/sgl-project/sglang/issues
+- **vLLM:** https://github.com/vllm-project/vllm/issues
+- **llama.cpp:** https://github.com/ggml-org/llama.cpp/issues
 
 ## Learn more
 

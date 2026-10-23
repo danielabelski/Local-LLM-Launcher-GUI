@@ -78,12 +78,18 @@ function OpenWebUIPanel({ notify }) {
   )
 }
 
-function EngineRow({ ok, name, note }) {
+function EngineRow({ ok, name, note, version, path }) {
   return (
     <div className="engine-row">
-      <span className={`engine-dot ${ok ? 'on' : 'off'}`} />
-      <span className="engine-name">{name}</span>
-      <span className="engine-note">{note}</span>
+      <span className={`engine-dot ${ok ? 'on' : 'off'}`} aria-hidden="true" />
+      <div className="engine-info">
+        <div className="engine-heading">
+          <span className="engine-name">{name}</span>
+          <span className="engine-note">{note}</span>
+        </div>
+        {version && <div className="engine-version">{version}</div>}
+        {path && <div className="engine-path" title={path}>{path}</div>}
+      </div>
     </div>
   )
 }
@@ -95,13 +101,14 @@ export default function Dashboard({ hardware, servers, goLaunch, setTab, notify 
     let active = true
     api.engineVersions().then((result) => { if (active) setVersions(result) }).catch(() => {})
     return () => { active = false }
-  }, [hardware?.engines?.llamacpp_path, hardware?.engines?.vllm_native])
-  const versionName = (name, key, available) => {
-    if (!available) return name
+  }, [hardware?.engines?.llamacpp_path, hardware?.engines?.vllm_native,
+      hardware?.engines?.vllm_docker, hardware?.engines?.sglang, hardware?.engines?.tgi])
+  const versionText = (key, available) => {
+    if (!available) return null
     const version = versions?.[key]
-    if (!version) return name
+    if (!version) return null
     const installed = version.installed || 'version unknown'
-    return `${name} ${installed}${version.latest ? ` (latest ${version.latest})` : ''}`
+    return `${installed}${version.latest ? ` (latest ${version.latest})` : ''}`
   }
   const running = servers.filter((s) => s.running)
 
@@ -192,24 +199,34 @@ export default function Dashboard({ hardware, servers, goLaunch, setTab, notify 
       </div>
 
       {/* ENGINES + VRAM BUDGET side by side */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
+      <div className="engine-budget-grid">
         <div className="section" style={{ marginBottom: 0 }}>
           <div className="section-head">
             <div className="section-title">Engines</div>
             {hardware && (
               <StatusBadge level="green">
-                {[hardware.engines.vllm_native, hardware.engines.vllm_docker, !!hardware.engines.llamacpp_path].filter(Boolean).length} available
+                {[hardware.engines.vllm_native, hardware.engines.vllm_docker, !!hardware.engines.llamacpp_path, hardware.engines.sglang, hardware.engines.tgi].filter(Boolean).length} available
               </StatusBadge>
             )}
           </div>
           {hardware ? (
             <>
-              <EngineRow ok={hardware.engines.vllm_native} name={versionName('vLLM', 'vllm', hardware.engines.vllm_native)}
+              <EngineRow ok={hardware.engines.vllm_native} name="vLLM"
+                version={versionText('vllm', hardware.engines.vllm_native)}
                 note={hardware.engines.vllm_native ? 'installed' : 'not installed'} />
-              <EngineRow ok={hardware.engines.vllm_docker} name={versionName('vLLM (Docker)', 'vllm_docker', hardware.engines.vllm_docker)}
+              <EngineRow ok={hardware.engines.vllm_docker} name="vLLM (Docker)"
+                version={versionText('vllm_docker', hardware.engines.vllm_docker)}
                 note={hardware.engines.vllm_docker ? 'image found' : 'no Docker image'} />
-              <EngineRow ok={!!hardware.engines.llamacpp_path} name={versionName('llama.cpp', 'llamacpp', !!hardware.engines.llamacpp_path)}
-                note={hardware.engines.llamacpp_path || 'not found'} />
+              <EngineRow ok={!!hardware.engines.llamacpp_path} name="llama.cpp"
+                version={versionText('llamacpp', !!hardware.engines.llamacpp_path)}
+                note={hardware.engines.llamacpp_path ? 'installed' : 'not found'}
+                path={hardware.engines.llamacpp_path} />
+              <EngineRow ok={hardware.engines.sglang} name="SGLang"
+                version={versionText('sglang', hardware.engines.sglang)}
+                note={hardware.engines.sglang ? 'installed' : 'not installed'} />
+              <EngineRow ok={hardware.engines.tgi} name="TGI (Docker)"
+                version={versionText('tgi', hardware.engines.tgi)}
+                note={hardware.engines.tgi ? 'image found' : 'no Docker image'} />
             </>
           ) : <p style={{ padding: 16, color: 'var(--ink-3)' }}>…</p>}
         </div>

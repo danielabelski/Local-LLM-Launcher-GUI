@@ -658,6 +658,228 @@ def _advise_llamacpp(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, A
     }
 
 
+# ------------------------------------------------------------------------ SGLang
+
+def _advise_sglang(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, Any], rep: _Report) -> Dict[str, Any]:
+    gpus = _selected_gpus(hw, cfg)
+    weights_gb = model["size_bytes"] / GB
+
+    # Hard blockers.
+    if model.get("format") == "gguf":
+        rep.blockers.append(
+            "This is a GGUF file — SGLang does not load GGUF files. Switch the engine to "
+            "llama.cpp, which is built for GGUF."
+        )
+    if hw.get("apple_silicon"):
+        rep.blockers.append(
+            "SGLang cannot use the GPU in Apple Silicon Macs. Use llama.cpp instead — it supports "
+            "Apple's Metal acceleration and will be much faster here."
+        )
+    elif not gpus:
+        rep.blockers.append(
+            "SGLang needs an NVIDIA GPU and none was detected. Use llama.cpp, which can run on CPU."
+        )
+
+    util = float(cfg.get("mem_fraction_static", 0.88))
+    tp = int(cfg.get("tensor_parallel_size", 1))
+    max_len = int(cfg.get("context_length") or (model.get("config") or {}).get("max_position_embeddings", 8192))
+    seqs = int(cfg.get("max_running_requests", 4))
+
+    # tensor_parallel_size rules
+    if gpus:
+        if tp > len(gpus):
+            rep.flag("tensor_parallel_size", RED,
+                     f"You asked to split across {tp} GPUs but only {len(gpus)} are available. "
+                     f"Set this to {len(gpus)} or fewer.")
+        elif len(gpus) % tp != 0:
+            rep.flag("tensor_parallel_size", YELLOW,
+                     f"{tp} doesn't divide evenly into your {len(gpus)} GPUs, so some GPUs would sit idle.")
+
+    # Capacity: SGLang claims `util` of each GPU for weights + KV cache pool.
+    used_gpus = gpus[: max(tp, 1)] if gpus else []
+    capacity_gb = sum(g["vram_total_mb"] for g in used_gpus) / 1024 * util
+    kv_dtype_bytes = 1.0 if cfg.get("kv_cache_dtype") and "fp8" in str(cfg.get("kv_cache_dtype")) else 2.0
+    kv_gb = estimate_kv_gb(model.get("config") or {}, model.get("param_count_b"),
+                           max_len, seqs=min(seqs, 2), dtype_bytes=kv_dtype_bytes)
+    needed_gb = weights_gb + kv_gb + WORKING_BUFFER_GB
+
+    if gpus and tp < len(gpus) and needed_gb > capacity_gb:
+        all_capacity = sum(g["vram_total_mb"] for g in gpus) / 1024 * util
+        if needed_gb <= all_capacity:
+            rep.flag("tensor_parallel_size", YELLOW,
+                     f"This model needs ~{needed_gb:.0f} GB but {tp} GPU(s) only give "
+                     f"{capacity_gb:.0f} GB. Set this to {len(gpus)} to use all your GPUs.")
+
+    # mem_fraction_static rules — check free memory headroom
+    if used_gpus:
+        worst_free_ratio = min(g["vram_free_mb"] / g["vram_total_mb"] for g in used_gpus)
+        if util > worst_free_ratio - 0.005:
+            busiest = min(used_gpus, key=lambda g: g["vram_free_mb"] / g["vram_total_mb"])
+            in_use = (busiest["vram_total_mb"] - busiest["vram_free_mb"]) / 1024
+            rep.flag("mem_fraction_static", RED,
+                     f"Your desktop and other programs are already using ~{in_use:.1f} GB on GPU "
+                     f"{busiest['index']}, so SGLang can't claim {util:.2f} of it — the launch will fail "
+                     f"its memory check. Lower this to {max(worst_free_ratio - 0.02, 0.5):.2f} or close "
+                     f"GPU-heavy apps (browsers, games).")
+        elif util > 0.90 and all(g["vram_total_mb"] <= 24 * 1024 for g in used_gpus):
+            rep.flag("mem_fraction_static", YELLOW,
+                     "Above 0.90 on consumer cards the launch often fails its memory check because "
+                     "the driver and desktop need some space. 0.85–0.90 is the safe zone.")
+
+    # quantization override
+    if cfg.get("quantization"):
+        rep.flag("quantization", YELLOW,
+                 "SGLang reads the compression format from the model files automatically, and refuses to "
+                 "start if this setting doesn't match exactly. Leave it empty unless a model's "
+                 "instructions say otherwise.")
+
+    # context above the model's trained limit
+    max_pos = (model.get("config") or {}).get("max_position_embeddings")
+    if max_pos and cfg.get("context_length") and int(cfg["context_length"]) > int(max_pos):
+        rep.flag("context_length", YELLOW,
+                 f"This model was trained for a maximum of {int(max_pos):,} tokens of context. "
+                 f"Asking for more usually fails at startup or degrades answers.")
+
+    # reasoning parser: suggest when empty, hard-stop on family mismatch
+    # SGLang uses hyphenated names (deepseek-r1) while vLLM uses underscores (deepseek_r1).
+    # Normalize to underscore for comparison; display in engine-native format.
+    detected = None
+    for pattern, parser in _REASONING_FAMILIES:
+        if pattern.search(model.get("repo_id", "")):
+            detected = parser
+            break
+    chosen = cfg.get("reasoning_parser")
+    chosen_norm = chosen.replace("-", "_") if chosen else None
+    display_detected = (detected or "").replace("_", "-") if detected else None
+    if chosen and chosen != "auto" and detected and chosen_norm != detected:
+        rep.flag("reasoning_parser", RED,
+                 f"'{chosen}' is the wrong format for this model — it looks like a '{display_detected or detected}' "
+                 f"family model, and a mismatched parser makes the launch fail instantly. "
+                 f"Pick '{display_detected or detected}' (or leave this empty).")
+    elif chosen and chosen != "auto" and not detected:
+        rep.flag("reasoning_parser", YELLOW,
+                 f"Couldn't confirm this model uses the '{chosen}' thinking format. If the launch "
+                 f"fails immediately, clear this setting.")
+    elif detected and not chosen:
+        rep.flag("reasoning_parser", YELLOW,
+                 f"This looks like a '{display_detected or detected}' family model that thinks step-by-step before "
+                 f"answering. Set the thinking-model format to '{display_detected or detected}' or 'auto' so apps get clean "
+                 f"answers instead of raw thinking text.")
+
+    # many simultaneous requests on consumer hardware
+    if seqs > 32 and gpus and all(g["vram_total_mb"] <= 24 * 1024 for g in gpus):
+        rep.flag("max_running_requests", YELLOW,
+                 "Each simultaneous request reserves conversation memory on the GPU. On consumer "
+                 "cards, high values can starve the model of memory. 4-16 is plenty for personal use.")
+
+    if cfg.get("kv_cache_dtype") and "fp8" in str(cfg.get("kv_cache_dtype")):
+        rep.flag("kv_cache_dtype", GREEN,
+                 "Good choice for tight fits — this roughly halves conversation memory with little "
+                 "quality loss.")
+
+    if model.get("multimodal") and cfg.get("enable_multimodal"):
+        rep.flag("enable_multimodal", GREEN,
+                 "Vision/audio support was explicitly requested. Leaving this unset lets SGLang detect the model's capabilities.")
+
+    # Load-time headroom per GPU
+    if used_gpus and not rep.blockers:
+        per_gpu_load_gb = weights_gb / max(tp, 1) + CUDA_OVERHEAD_GB + LOAD_BUFFER_GB
+        worst = min(used_gpus, key=lambda g: g["vram_free_mb"])
+        worst_free_gb = worst["vram_free_mb"] / 1024
+        if per_gpu_load_gb > worst_free_gb:
+            shortfall = per_gpu_load_gb - worst_free_gb
+            held = (worst["vram_total_mb"] - worst["vram_free_mb"]) / 1024
+            rep.escalate(
+                RED if shortfall > 1.5 else YELLOW,
+                f"Loading needs ~{per_gpu_load_gb:.1f} GB free on each card, but GPU "
+                f"{worst['index']} has {worst_free_gb:.1f} GB free right now (numbers "
+                f"re-checked every few seconds via nvidia-smi). Other programs and the "
+                f"graphics driver are holding {held:.1f} GB — on the card driving your "
+                f"monitors, the desktop and browser are usually the biggest pieces. "
+                f"Close GPU-heavy apps and this should fit; you're about "
+                f"{shortfall:.1f} GB short.",
+            )
+
+    # KV-cache gate
+    if used_gpus and not rep.blockers:
+        pool_per_gpu = sum(g["vram_total_mb"] for g in used_gpus) / 1024 / len(used_gpus) * util
+        weights_per_gpu = weights_gb / max(tp, 1)
+        kv_headroom_per_gpu = pool_per_gpu - weights_per_gpu - VLLM_WORKING_SET_PER_GPU_GB
+        kv_needed_per_gpu = kv_gb / max(tp, 1)
+        if kv_needed_per_gpu > kv_headroom_per_gpu:
+            if kv_needed_per_gpu > 0:
+                fit_ratio = max(kv_headroom_per_gpu, 0) / kv_needed_per_gpu
+                fit_len = int(max_len * fit_ratio) // 512 * 512
+            else:
+                fit_len = 0
+            headroom_for_util = (min(g["vram_free_mb"] for g in used_gpus) / 1024) / \
+                (sum(g["vram_total_mb"] for g in used_gpus) / 1024 / len(used_gpus))
+            can_raise_util = headroom_for_util > util + 0.02
+            tips = []
+            if fit_len >= 512:
+                tips.append(f"lower the context window to about {fit_len:,}")
+            if can_raise_util:
+                tips.append(f"raise the GPU memory usage limit toward {min(headroom_for_util - 0.02, 0.95):.2f}")
+            if kv_dtype_bytes > 1.0:
+                tips.append("set conversation memory compression to fp8")
+            tip_text = "; ".join(tips) if tips else "use a smaller model or free GPU memory"
+            rep.escalate(
+                YELLOW,
+                f"The weights fit, but at a {max_len:,}-token context there's only about "
+                f"{max(kv_headroom_per_gpu, 0):.1f} GB left per card for conversation memory "
+                f"(KV cache) and ~{kv_needed_per_gpu:.1f} GB is needed — so the server would "
+                f"load the model and then refuse to start. To fix: {tip_text}.",
+            )
+
+    available_gb = capacity_gb
+    return {
+        "weights_gb": round(weights_gb, 1),
+        "kv_cache_gb": round(kv_gb, 1),
+        "working_buffer_gb": WORKING_BUFFER_GB,
+        "overhead_gb": round(CUDA_OVERHEAD_GB * len(used_gpus), 1),
+        "needed_gb": round(needed_gb, 1),
+        "available_gb": round(available_gb, 1),
+        "basis": f"{len(used_gpus)} GPU(s) x utilization {util:.2f}",
+    }
+
+
+# ----------------------------------------------------------------------------- TGI
+
+def _advise_tgi(model: Dict[str, Any], cfg: Dict[str, Any], hw: Dict[str, Any], rep: _Report) -> Dict[str, Any]:
+    gpus = _selected_gpus(hw, cfg)
+    if model.get("format") == "gguf":
+        rep.blockers.append("TGI needs Hugging Face model files. Choose a safetensors model or use llama.cpp for GGUF.")
+    if not gpus:
+        rep.blockers.append("The TGI Docker image needs an NVIDIA GPU on this computer.")
+    shards = int(cfg.get("num_shard") or len(gpus) or 1)
+    if shards > len(gpus) and gpus:
+        rep.flag("num_shard", RED, f"Only {len(gpus)} GPU(s) are available. Use {len(gpus)} shards or fewer.")
+        rep.blockers.append("TGI cannot use more GPU shards than visible GPUs.")
+    context = int(cfg.get("max_total_tokens") or min((model.get("config") or {}).get("max_position_embeddings") or 8192, 8192))
+    input_limit = cfg.get("max_input_tokens")
+    if input_limit is not None and int(input_limit) >= context:
+        rep.flag("max_input_tokens", RED, "Prompt limit must be below total tokens so there is room for a reply.")
+        rep.blockers.append("TGI requires maximum input tokens below maximum total tokens.")
+    fraction = float(cfg.get("cuda_memory_fraction") or 1.0)
+    selected = gpus[:shards]
+    capacity = sum(min(g["vram_total_mb"] * fraction, g["vram_free_mb"])
+                   for g in selected) / 1024
+    kv_bytes = 1.0 if cfg.get("kv_cache_dtype") else 2.0
+    kv = estimate_kv_gb(model.get("config") or {}, model.get("param_count_b"), context,
+                        seqs=1, dtype_bytes=kv_bytes)
+    weights = model["size_bytes"] / GB
+    needed = weights + kv + WORKING_BUFFER_GB + CUDA_OVERHEAD_GB * len(selected)
+    if cfg.get("kv_cache_dtype"):
+        rep.flag("kv_cache_dtype", YELLOW, "FP8 cache can save memory, but model and GPU support vary. Check the server log if loading fails.")
+    if fraction > 0.9 and selected:
+        rep.flag("cuda_memory_fraction", YELLOW, "Leave GPU memory for the desktop and other programs; 0.85–0.90 is usually safer.")
+    rep.escalate(YELLOW, "TGI memory figures are rough; the archived upstream project may not support newer model architectures.")
+    return {"weights_gb": round(weights, 1), "kv_cache_gb": round(kv, 1),
+            "working_buffer_gb": WORKING_BUFFER_GB, "overhead_gb": round(CUDA_OVERHEAD_GB * len(selected), 1),
+            "needed_gb": round(needed, 1), "available_gb": round(capacity, 1),
+            "basis": f"{len(selected)} GPU(s) x memory fraction {fraction:.2f}"}
+
+
 # ------------------------------------------------------------------------- public
 
 def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[str, Any]) -> Dict[str, Any]:
@@ -678,6 +900,10 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
             rep.flag(key, RED, message)
             rep.blockers.append(message)
         budget = _advise_llamacpp(model, cfg, hw, rep)
+    elif engine == "sglang":
+        budget = _advise_sglang(model, cfg, hw, rep)
+    elif engine == "tgi":
+        budget = _advise_tgi(model, cfg, hw, rep)
     else:
         raise ValueError(f"Unknown engine '{engine}'")
 
@@ -744,8 +970,15 @@ def advise(engine: str, model: Dict[str, Any], config: Dict[str, Any], hw: Dict[
         details = list(rep.details)
         # When a vision model is tight or over budget and text-only isn't on yet,
         # point to it as the first thing to try — it's the biggest lever here.
-        if (engine == "vllm" and level in (YELLOW, RED) and model.get("multimodal")
-                and not cfg.get("language_model_only")):
+        # SGLang's unset enable-multimodal leaves auto-detection in place.
+        if engine == "vllm":
+            is_text_only = bool(cfg.get("language_model_only"))
+        elif engine == "llamacpp":
+            is_text_only = bool(cfg.get("no_mmproj"))
+        else:
+            is_text_only = True
+        if (engine in ("vllm", "llamacpp") and level in (YELLOW, RED) and model.get("multimodal")
+                and not is_text_only):
             details.insert(0,
                 "This is a vision/audio model. If you only need text, turn on Text-only "
                 "mode (below) — it skips the image/audio encoder and often frees enough "
@@ -781,7 +1014,14 @@ def _max_context_that_fits(engine: str, model: Dict[str, Any], hw: Dict[str, Any
     best = 2048
     for length in range(2048, 262145, 2048):
         cfg = dict(base)
-        key = "max_model_len" if engine == "vllm" else "ctx_size"
+        if engine == "vllm":
+            key = "max_model_len"
+        elif engine == "sglang":
+            key = "context_length"
+        elif engine == "tgi":
+            key = "max_total_tokens"
+        else:
+            key = "ctx_size"
         cfg[key] = length
         a = advise(engine, model, cfg, hw)
         if a["budget"]["pct"] is not None and a["budget"]["pct"] <= 0.9:
@@ -827,6 +1067,38 @@ def presets(engine: str, model: Dict[str, Any], hw: Dict[str, Any]) -> List[Dict
                 "max_model_len": 4096, "max_num_seqs": 1, "kv_cache_dtype": "fp8"},
                 "description": "For models that barely fit: claims as much GPU memory as is "
                                "actually free right now and minimizes everything else."})
+    elif engine == "sglang":
+        tp = max(len(gpus), 1)
+        safe = {"tensor_parallel_size": tp, "mem_fraction_static": 0.88}
+        out.append({"name": "Safe (recommended)", "config": safe,
+                    "description": "Conservative settings that almost always start on the first try. "
+                                   "SGLang auto-detects optimal context length and batch size."})
+
+        ctx_base = {"tensor_parallel_size": tp, "mem_fraction_static": 0.90,
+                    "kv_cache_dtype": "fp8_e4m3"}
+        max_ctx = _max_context_that_fits("sglang", model, hw, ctx_base)
+        out.append({"name": "Max context", "config": {**ctx_base, "context_length": max_ctx},
+                    "description": f"Longest document window that fits: ~{max_ctx:,} tokens, "
+                                   "with compressed conversation memory (SGLang's RadixAttention "
+                                   "reuses cached prefixes automatically)."})
+        out.append({"name": "Max speed", "config": {
+            "tensor_parallel_size": tp, "mem_fraction_static": 0.85,
+            "chunked_prefill_size": 4096, "schedule_policy": "lpm"},
+            "description": "Short chunks, longest-prefix-match scheduling — ideal when many "
+                           "requests share the same system prompt (RadixAttention shines here)."})
+
+        if gpus:
+            worst_free = min(g["vram_free_mb"] / g["vram_total_mb"] for g in gpus)
+            tight_util = round(max(min(worst_free - 0.02, 0.95), 0.5), 2)
+            out.append({"name": "Tight fit", "config": {
+                "tensor_parallel_size": tp, "mem_fraction_static": tight_util,
+                "chunked_prefill_size": 2048, "kv_cache_dtype": "fp8_e4m3"},
+                "description": "For models that barely fit: claims as much GPU memory as is "
+                               "actually free right now and minimizes everything else."})
+    elif engine == "tgi":
+        out.append({"name": "Safe (recommended)", "config": {
+            "cuda_memory_fraction": 0.85, "max_total_tokens": 4096, "max_input_tokens": 3072},
+            "description": "A modest context with room for the reply."})
     else:
         out.append({"name": "Safe (recommended)", "config": {
             "ctx_size": 8192, "flash_attn": "auto", "jinja": True},

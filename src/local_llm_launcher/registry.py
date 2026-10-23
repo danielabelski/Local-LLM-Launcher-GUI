@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .engines import llamacpp, mtp, vllm_backends, vllm_docker, vllm_native
+from .engines import llamacpp, mtp, sglang, tgi, vllm_backends, vllm_docker, vllm_native
 from .engines.base import LocalServer
 from . import catalog
 
@@ -72,6 +72,9 @@ class ServerManager:
                 srv = LocalServer.from_record(rec, self.log_dir)
             except (KeyError, TypeError):
                 continue
+            # A launcher crash may have left a token env file behind. Recheck
+            # persisted processes before serving their saved status.
+            srv.is_running()
             # Keep recently-dead servers too so their logs/errors stay visible.
             self.servers[srv.server_id] = srv
 
@@ -92,6 +95,10 @@ class ServerManager:
             return vllm_docker.build(model, config)
         if engine_mode == "llamacpp":
             return llamacpp.build(model, config, binary=llamacpp_binary or "llama-server")
+        if engine_mode == "sglang":
+            return sglang.build(model, config)
+        if engine_mode == "tgi":
+            return tgi.build(model, config)
         raise ValueError(f"Unknown engine mode '{engine_mode}'")
 
     def launch(self, engine_mode: str, model: Dict[str, Any], config: Dict[str, Any],
@@ -105,7 +112,7 @@ class ServerManager:
             selected_path = llamacpp.pick_gguf_path(model, config)
             config["gguf_file"] = next(f["filename"] for f in model["gguf_files"]
                                        if f["path"] == selected_path)
-        if config.get("use_mtp"):
+        if config.get("use_mtp") and engine_mode in ("llamacpp", "vllm-native", "vllm-docker"):
             decision = mtp.resolve(engine_mode, model, config, vllm_binary=vllm_binary or "vllm",
                                    llama_binary=llamacpp_binary or "llama-server")
             if decision["level"] == "red":
@@ -114,8 +121,8 @@ class ServerManager:
         with self._lock:
             # Reserve the port before building/spawning: a new process may not
             # listen yet when another launch arrives.
-            default_port = catalog.defaults("llamacpp")["port"] if engine_mode == "llamacpp" \
-                else catalog.defaults("vllm")["port"]
+            catalog_engine = "vllm" if engine_mode.startswith("vllm") else engine_mode
+            default_port = catalog.defaults(catalog_engine)["port"]
             reserved = {s.port for s in self.servers.values()
                         if s.server_id in self._stopping or s.is_running()}
             config["port"] = find_free_port(int(config.get("port", default_port)),

@@ -12,7 +12,7 @@ from functools import lru_cache
 from importlib import resources
 from typing import Any, Dict
 
-ENGINES = ("vllm", "llamacpp")
+ENGINES = ("vllm", "llamacpp", "sglang", "tgi")
 
 
 @lru_cache(maxsize=None)

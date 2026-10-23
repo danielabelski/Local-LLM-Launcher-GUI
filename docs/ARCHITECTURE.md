@@ -9,7 +9,7 @@ on the GPU."
 | Layer | Choice | Why |
 |---|---|---|
 | Backend framework | **FastAPI** (Python) | The hardware/model logic (`nvidia-smi` parsing, HuggingFace cache scanning, subprocess management) is naturally Python — it's the same language vLLM and the model ecosystem already use, so there's no language bridge for anything filesystem- or process-related. FastAPI gives typed request/response models (via Pydantic) and automatic validation with very little boilerplate. |
-| Frontend framework | **React + Vite** | A component-per-view structure maps cleanly onto the app's five screens (Dashboard, Models, Launch, Servers, Settings), each of which is mostly "fetch some JSON, render a form or a list." Vite gives a fast dev server with an API proxy and a simple, fast production build. |
+| Frontend framework | **React + Vite** | A component-per-view structure maps cleanly onto the app's seven screens (Dashboard, Models, Launch, Favorites, Servers, Benchmarks, Settings), each of which is mostly "fetch some JSON, render a form or a list." Vite gives a fast dev server with an API proxy and a simple, fast production build. |
 | Styling | **Plain CSS with design tokens** (`theme.css`), no UI framework | The traffic-light system (red/yellow/green) and the segmented memory gauge are bespoke visual elements that don't map onto a generic component library. A small token-based stylesheet (colors, spacing, radii as CSS variables) keeps ~30 components visually consistent without pulling in Tailwind/MUI/etc. for what is fundamentally a few dozen custom components. |
 | Packaging | Frontend builds **into** `src/local_llm_launcher/static/` | `pip install .` ships a complete app — Python backend *and* prebuilt frontend assets — as one package. End users never need Node.js or `npm`. |
 | State/persistence | Flat JSON files under `~/.local-llm-launcher/` | No database needed: the app tracks a handful of running-server records, download jobs, and settings. JSON files are human-inspectable and trivially backed up. `settings.json` (which may hold a HuggingFace token) is written with `chmod 600`. |
@@ -26,6 +26,7 @@ Local-LLM-Launcher-GUI/
 │   ├── api.py                    # All REST routes
 │   ├── __main__.py               # `local-llm-launcher` CLI entry point
 │   ├── hardware.py                # GPU / Apple Silicon / CPU / RAM / engine detection
+│   ├── engine_versions.py         # Installed engine versions and cached upstream releases
 │   ├── discovery.py               # Find installed models (HF cache + GGUF folders)
 │   ├── catalog.py                 # Loads flag catalogs from data/*.json
 │   ├── advisor.py                 # The traffic-light rules engine (see below)
@@ -37,6 +38,8 @@ Local-LLM-Launcher-GUI/
 │   ├── data/
 │   │   ├── flags_vllm.json         # vLLM flag catalog (label, help, type, category)
 │   │   ├── flags_llamacpp.json     # llama.cpp flag catalog
+│   │   ├── flags_sglang.json       # SGLang flag catalog
+│   │   ├── flags_tgi.json          # TGI flag catalog
 │   │   └── failures.json           # Log-pattern → plain-English message
 │   ├── engines/
 │   │   ├── _args.py                # Shared: config dict → CLI args using the catalog
@@ -47,7 +50,9 @@ Local-LLM-Launcher-GUI/
 │   │   ├── vllm_capabilities.py    # Probes the selected vLLM runtime (flags, b12x)
 │   │   ├── vllm_native.py          # `vllm serve ...` command builder
 │   │   ├── vllm_docker.py          # `docker run vllm/vllm-openai ...` command builder
-│   │   └── llamacpp.py             # `llama-server ...` command builder
+│   │   ├── llamacpp.py             # `llama-server ...` command builder
+│   │   ├── sglang.py               # SGLang native command builder
+│   │   └── tgi.py                  # TGI Docker command builder
 │   └── static/                     # Built frontend (generated, committed)
 ├── frontend/
 │   └── src/
@@ -59,16 +64,18 @@ Local-LLM-Launcher-GUI/
 │           ├── Dashboard.jsx        # Hardware summary, engines, running servers
 │           ├── Models.jsx           # Installed models, search, downloads
 │           ├── Launch.jsx           # The flag panel + advisor + launch button
+│           ├── Favorites.jsx        # Saved launch configurations
 │           ├── Servers.jsx          # Running servers, logs, test chat
+│           ├── Benchmarks.jsx       # Supported engine log measurements
 │           └── Settings.jsx         # HF token, GGUF folders, llama.cpp path, about
-└── tests/                           # pytest — 360 tests across all backend modules
+└── tests/                           # pytest coverage across backend modules
 ```
 
 ## Data flow: from slider to subprocess
 
 1. **Hardware detection** (`hardware.py`) runs `nvidia-smi`, checks for Apple
    Silicon (`sysctl`/`platform`), reads CPU/RAM/disk via `psutil`, and checks
-   whether `vllm` (pip or Docker image) and `llama-server` are available. This
+   whether vLLM, llama.cpp, SGLang, and TGI are available. This
    is cached for 5 seconds (`api.py`'s `get_hardware()`) so rapid UI
    interactions don't hammer `nvidia-smi`, but the **Launch** screen polls
    every 8 seconds so free-VRAM numbers stay current while you're tuning
@@ -91,7 +98,8 @@ Local-LLM-Launcher-GUI/
    to `/api/advise`. `advisor.advise()`:
    - merges your config onto the catalog defaults (for *display/estimation*
      only — see below),
-   - runs engine-specific rules (`_advise_vllm` / `_advise_llamacpp`),
+   - runs engine-specific rules (`_advise_vllm`, `_advise_llamacpp`,
+     `_advise_sglang`, or `_advise_tgi`),
    - computes a memory budget (weights + KV cache + working buffer vs. what's
      free, per GPU),
    - returns an overall verdict (green/yellow/red with a headline and detail
@@ -103,8 +111,10 @@ Local-LLM-Launcher-GUI/
 
 5. **On Launch**, the frontend POSTs `{engine_mode, repo_id, config}` to
    `/api/servers`. The chosen engine module (`engines/vllm_native.py`,
-   `vllm_docker.py`, or `llamacpp.py`) calls `_args.build_args_and_env()`,
-   which converts **only the keys present in `config`** into CLI flags using
+   `vllm_docker.py`, `llamacpp.py`, `sglang.py`, or `tgi.py`) builds the
+   launch command from the selected engine's catalog and runtime settings.
+   Each builder calls `_args.build_args_and_env()`, which converts
+   **only the keys present in `config`** into CLI flags using
    the catalog's `cli_flag` mapping — catalog defaults are *never* silently
    added to the command line (see [CHANGELOG.md](CHANGELOG.md), the
    `--swap-space` entry, for why this is load-bearing).
@@ -124,6 +134,10 @@ Local-LLM-Launcher-GUI/
    backend proxies to the running server's own
    `http://127.0.0.1:<port>/v1/chat/completions` — letting you confirm the
    model actually answers without leaving the GUI or knowing what `curl` is.
+
+The sidebar gets the launcher version from `/api/about`. The Dashboard gets
+installed engine versions and cached latest upstream releases from
+`/api/engine-versions`.
 
 ## The advisor
 
@@ -160,7 +174,8 @@ minus a small driver overhead (NVIDIA), or system RAM × 80% (CPU-only).
 
 ### Rules
 
-Each engine has a function (`_advise_vllm`, `_advise_llamacpp`) that:
+Each engine has a function (`_advise_vllm`, `_advise_llamacpp`,
+`_advise_sglang`, or `_advise_tgi`) that:
 - declares **hard blockers** (red, launch disabled) — e.g. a GGUF file
   selected with the vLLM engine, or vLLM selected on Apple Silicon;
 - rates **individual flags** — e.g. `gpu_memory_utilization` above what's

@@ -68,6 +68,10 @@ def recommended_engine(model: Dict[str, Any], hw: Dict[str, Any]) -> str:
         return "vllm-native"
     if hw["engines"].get("vllm_docker"):
         return "vllm-docker"
+    if hw["engines"].get("sglang"):
+        return "sglang"
+    if hw["engines"].get("tgi"):
+        return "tgi"
     return "vllm-native"
 
 
@@ -99,6 +103,8 @@ def api_about():
             },
             {"name": "vLLM", "url": "https://github.com/vllm-project/vllm"},
             {"name": "llama.cpp", "url": "https://github.com/ggml-org/llama.cpp"},
+            {"name": "SGLang", "url": "https://github.com/sgl-project/sglang"},
+            {"name": "Hugging Face TGI", "url": "https://github.com/huggingface/text-generation-inference"},
         ],
     }
 
@@ -137,9 +143,16 @@ def api_models():
     rank = {"green": 0, "yellow": 1, "red": 2}
     for m in installed_models():
         engine = recommended_engine(m, hw)
-        adv_engine = "llamacpp" if engine == "llamacpp" else "vllm"
-        # The badge answers "can this run on my hardware at all?" — so report the
-        # best outcome across presets, not just the conservative default.
+        if engine == "llamacpp":
+            adv_engine = "llamacpp"
+        elif engine == "sglang":
+            adv_engine = "sglang"
+        elif engine == "tgi":
+            adv_engine = "tgi"
+        else:
+            adv_engine = "vllm"
+        # Rate the engine Launch selects by default, using its best preset so a
+        # conservative preset does not hide a configuration that fits.
         best = None
         for preset in advisor.presets(adv_engine, m, hw):
             advice = advisor.advise(adv_engine, m, preset["config"], hw)
@@ -202,7 +215,7 @@ def api_catalog(engine: str):
 
 
 class AdviseRequest(BaseModel):
-    engine: str  # "vllm" | "llamacpp"
+    engine: str  # "vllm" | "llamacpp" | "sglang" | "tgi"
     engine_mode: Optional[str] = None
     repo_id: str
     config: Dict[str, Any] = {}
@@ -248,7 +261,7 @@ def api_presets(engine: str, repo_id: str):
 
 
 class LaunchRequest(BaseModel):
-    engine_mode: str  # "vllm-native" | "vllm-docker" | "llamacpp"
+    engine_mode: str  # "vllm-native" | "vllm-docker" | "llamacpp" | "sglang" | "tgi"
     repo_id: str
     config: Dict[str, Any] = {}
 
@@ -264,12 +277,19 @@ def api_launch(body: LaunchRequest):
             raise HTTPException(400, "The selected GGUF file is no longer installed. Choose an available file in Launch.")
     if body.engine_mode.startswith("vllm") and settings.data.get("hf_token") and not config.get("hf_token"):
         config["hf_token"] = settings.data["hf_token"]
+    if body.engine_mode in ("sglang", "tgi") and settings.data.get("hf_token") and not config.get("hf_token"):
+        config["hf_token"] = settings.data["hf_token"]
     explicit_host = str(config.get("host") or "").strip()
     config["host"] = explicit_host or ("0.0.0.0" if settings.data.get("lan_access") else "127.0.0.1")
     hw = get_hardware()
     if body.engine_mode == "llamacpp" and not hw["engines"].get("llamacpp_path"):
         raise HTTPException(400, "llama.cpp (llama-server) was not found on this computer. "
                                  "See Settings for install instructions.")
+    if body.engine_mode == "sglang" and not hw["engines"].get("sglang"):
+        raise HTTPException(400, "SGLang is not installed on this computer. "
+                                 "Install it with: pip install sglang")
+    if body.engine_mode == "tgi" and not hw["engines"].get("tgi"):
+        raise HTTPException(400, "TGI Docker image was not found. Pull ghcr.io/huggingface/text-generation-inference:3.3.7 first.")
     try:
         srv = servers.launch(body.engine_mode, model, config,
                              llamacpp_binary=hw["engines"].get("llamacpp_path"),

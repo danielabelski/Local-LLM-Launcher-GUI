@@ -12,6 +12,18 @@ cmake --build build --config Release -j
 brew install llama.cpp`,
 }
 
+const SGLANG_INSTALL = `# Install SGLang (requires Python 3.11+ and an NVIDIA GPU):
+pip install 'sglang==0.5.22'
+
+# On Linux, SGLang's first GPU launch may also need a matching CUDA toolkit,
+# a C++ compiler, and Ninja for JIT kernels.
+
+# Or with uv (faster):
+pip install uv
+uv pip install 'sglang==0.5.22'`
+
+const TGI_INSTALL = `docker pull ghcr.io/huggingface/text-generation-inference:3.3.7`
+
 export default function Settings({ hardware, notify }) {
   const [settings, setSettings] = useState(null)
   const [token, setToken] = useState('')
@@ -129,6 +141,8 @@ export default function Settings({ hardware, notify }) {
 
   const isMac = !!hardware?.apple_silicon
   const llamaFound = !!hardware?.engines?.llamacpp_path
+  const sglangFound = !!hardware?.engines?.sglang
+  const tgiFound = !!hardware?.engines?.tgi
 
   return (
     <>
@@ -256,6 +270,36 @@ export default function Settings({ hardware, notify }) {
             <div className="logbox" style={{ height: 'auto', maxHeight: 200 }}>
               {isMac ? LLAMA_INSTALL.mac : LLAMA_INSTALL.linux}
             </div>
+          </div>
+        </div>
+      )}
+
+      {!sglangFound && (
+        <div className="section">
+          <div className="section-head">
+            <div className="section-title">Installing SGLang</div>
+          </div>
+          <div style={{ padding: '14px 20px' }}>
+            <p className="small muted" style={{ marginBottom: 10 }}>
+              SGLang is a high-performance serving framework with RadixAttention prefix caching
+              and structured generation. Great for agents and repeated prompts.
+            </p>
+            <div className="logbox" style={{ height: 'auto', maxHeight: 200 }}>
+              {SGLANG_INSTALL}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!tgiFound && (
+        <div className="section">
+          <div className="section-head"><div className="section-title">Installing Hugging Face TGI</div></div>
+          <div style={{ padding: '14px 20px' }}>
+            <p className="small muted" style={{ marginBottom: 10 }}>
+              TGI runs through Docker with an NVIDIA GPU. Hugging Face archived TGI in March 2026;
+              version 3.3.7 is its final published release. Newer models may work better with vLLM or SGLang.
+            </p>
+            <div className="logbox" style={{ height: 'auto' }}>{TGI_INSTALL}</div>
           </div>
         </div>
       )}

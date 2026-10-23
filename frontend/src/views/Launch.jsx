@@ -6,6 +6,8 @@ const ENGINE_LABELS = {
   'vllm-native': 'vLLM',
   'vllm-docker': 'vLLM (Docker)',
   llamacpp: 'llama.cpp',
+  sglang: 'SGLang',
+  tgi: 'Hugging Face TGI (Docker)',
 }
 const CATEGORY_TITLES = {
   essential: 'Essential',
@@ -14,7 +16,10 @@ const CATEGORY_TITLES = {
 }
 
 function adviceEngine(mode) {
-  return mode === 'llamacpp' ? 'llamacpp' : 'vllm'
+  if (mode === 'llamacpp') return 'llamacpp'
+  if (mode === 'sglang') return 'sglang'
+  if (mode === 'tgi') return 'tgi'
+  return 'vllm'
 }
 
 function defaultEngineMode(model, hardware) {
@@ -24,6 +29,8 @@ function defaultEngineMode(model, hardware) {
   if (hardware.apple_silicon || hardware.gpus.length === 0) return 'llamacpp'
   if (hardware.engines.vllm_native) return 'vllm-native'
   if (hardware.engines.vllm_docker) return 'vllm-docker'
+  if (hardware.engines.sglang) return 'sglang'
+  if (hardware.engines.tgi) return 'tgi'
   return 'vllm-native'
 }
 
@@ -31,6 +38,8 @@ function engineAvailable(mode, hardware) {
   if (!hardware) return true
   if (mode === 'vllm-native') return hardware.engines.vllm_native
   if (mode === 'vllm-docker') return hardware.engines.vllm_docker
+  if (mode === 'sglang') return hardware.engines.sglang
+  if (mode === 'tgi') return hardware.engines.tgi
   return !!hardware.engines.llamacpp_path
 }
 
@@ -376,7 +385,11 @@ export default function Launch({ hardware, initialModel, notify, onLaunched }) {
               headline: `${ENGINE_LABELS[engineMode]} is not installed on this computer. ` +
                 (engineMode === 'llamacpp'
                   ? 'See the Settings tab for install instructions.'
-                  : 'Install vLLM (pip install vllm) or pull the vllm/vllm-openai Docker image.'),
+                  : engineMode === 'sglang'
+                    ? 'Install SGLang (pip install sglang).'
+                    : engineMode === 'tgi'
+                      ? 'Pull the Hugging Face TGI Docker image shown in Settings.'
+                    : 'Install vLLM (pip install vllm) or pull the vllm/vllm-openai Docker image.'),
             }} />
           </div>
         </div>

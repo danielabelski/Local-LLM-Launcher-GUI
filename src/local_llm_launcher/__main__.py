@@ -9,7 +9,7 @@ import webbrowser
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="local-llm-launcher",
-        description="GUI for downloading and launching local LLMs (vLLM + llama.cpp).",
+        description="GUI for downloading and launching local LLMs with vLLM, llama.cpp, SGLang, or TGI.",
     )
     parser.add_argument("--port", type=int, default=8765, help="GUI port (default 8765)")
     parser.add_argument("--no-browser", action="store_true", help="don't open the browser")

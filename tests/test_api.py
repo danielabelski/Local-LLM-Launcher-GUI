@@ -29,11 +29,48 @@ def test_models_list(client):
     assert r.status_code == 200
     for m in r.json()["models"]:
         assert m["fit"] in ("green", "yellow", "red")
-        assert m["recommended_engine"] in ("vllm-native", "vllm-docker", "llamacpp")
+        assert m["recommended_engine"] in ("vllm-native", "vllm-docker", "llamacpp", "sglang", "tgi")
+
+
+def test_recommended_engine_matches_launch_default_priority():
+    from local_llm_launcher.api import recommended_engine
+
+    model = {"format": "safetensors"}
+    hw = {"gpus": [{"index": 0}], "apple_silicon": None,
+          "engines": {"vllm_native": True, "vllm_docker": True,
+                      "sglang": True, "tgi": True}}
+    assert recommended_engine(model, hw) == "vllm-native"
+    hw["engines"]["vllm_native"] = False
+    assert recommended_engine(model, hw) == "vllm-docker"
+    hw["engines"]["vllm_docker"] = False
+    assert recommended_engine(model, hw) == "sglang"
+    hw["engines"]["sglang"] = False
+    assert recommended_engine(model, hw) == "tgi"
+
+
+def test_model_fit_badge_uses_default_engine_when_engine_advice_differs(client, monkeypatch):
+    import local_llm_launcher.api as api
+
+    model = {"repo_id": "test/model", "format": "safetensors"}
+    hardware = {"gpus": [{"index": 0}], "apple_silicon": None,
+                "engines": {"vllm_native": True, "sglang": True}}
+    monkeypatch.setattr(api, "installed_models", lambda: [model])
+    monkeypatch.setattr(api, "get_hardware", lambda: hardware)
+    monkeypatch.setattr(api.advisor, "presets", lambda engine, model, hw: [{"config": {}}])
+    monkeypatch.setattr(api.advisor, "advise", lambda engine, model, config, hw: {
+        "overall": {"level": "red" if engine == "vllm" else "green",
+                    "headline": f"{engine} fit"},
+    })
+
+    badge = client.get("/api/models").json()["models"][0]
+    assert (badge["recommended_engine"], badge["fit"]) == ("vllm-native", "red")
+    hardware["engines"]["vllm_native"] = False
+    badge = client.get("/api/models").json()["models"][0]
+    assert (badge["recommended_engine"], badge["fit"]) == ("sglang", "green")
 
 
 def test_catalog_routes(client):
-    for engine in ("vllm", "llamacpp"):
+    for engine in ("vllm", "llamacpp", "sglang", "tgi"):
         r = client.get(f"/api/catalog/{engine}")
         assert r.status_code == 200
         assert len(r.json()["flags"]) > 5
@@ -184,8 +221,9 @@ def test_stop_unknown_server_is_404(client):
 def test_remove_failure_retains_server_and_reports_conflict(client, monkeypatch):
     import local_llm_launcher.api as api
 
-    monkeypatch.setattr(api.servers, "get", lambda server_id: object())
+    monkeypatch.setattr(api.servers, "get", lambda server_id: type("Server", (), {"status": lambda self: {"id": server_id}})())
     monkeypatch.setattr(api.servers, "remove", lambda server_id: False)
+    monkeypatch.setattr(api, "_enrich", lambda status: {})
     response = client.delete("/api/servers/known")
     assert response.status_code == 409
     assert "retained" in response.json()["detail"]
