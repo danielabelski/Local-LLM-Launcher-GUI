@@ -16,6 +16,8 @@ HF_CACHE = os.path.expanduser("~/.cache/huggingface")
 def _secret_file(values: Dict[str, str]) -> str | None:
     if not values:
         return None
+    if any("\n" in value or "\r" in value for value in values.values()):
+        raise ValueError("Tokens and API keys must be single-line values.")
     fd, path = tempfile.mkstemp(prefix="llml-tgi-", suffix=".env")
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w") as stream:
@@ -35,11 +37,11 @@ def build(model: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     flags, env, extra = build_args_and_env("tgi", cfg)
     secret_env = {key: value for key, value in env.items()
                   if any(word in key.upper() for word in ("TOKEN", "KEY", "SECRET"))}
-    env_file = _secret_file(secret_env)
     host_port = int(config.get("port", 8082))
     host = str(config.get("host") or "127.0.0.1").strip()
     devices = normalize_device_ids(config.get("device_ids"))
     gpu_request = f'"device={devices}"' if devices is not None else "all"
+    env_file = _secret_file(secret_env)
     name = f"llml-tgi-{uuid.uuid4().hex[:8]}"
     argv = ["docker", "run", "--rm", "--name", name,
             "--gpus", gpu_request, "--shm-size", "1g",

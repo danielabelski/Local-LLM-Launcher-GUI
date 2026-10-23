@@ -204,11 +204,10 @@ def _tgi_available() -> bool:
     if not docker:
         return False
     try:
-        out = subprocess.run([docker, "image", "ls", "--format", "{{.Repository}}"],
+        out = subprocess.run([docker, "image", "inspect",
+                              "ghcr.io/huggingface/text-generation-inference:3.3.7"],
                              capture_output=True, text=True, timeout=10)
-        return out.returncode == 0 and any(
-            line.strip() == "ghcr.io/huggingface/text-generation-inference"
-            for line in out.stdout.splitlines())
+        return out.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
