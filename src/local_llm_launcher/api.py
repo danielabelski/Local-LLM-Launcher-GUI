@@ -14,7 +14,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import __version__, advisor, benchmarks, catalog, discovery, failures, hardware
+from . import __version__, advisor, benchmarks, catalog, discovery, engine_versions, failures, hardware
 from .config import Settings
 from .downloads import DownloadManager, repo_files, search_hub
 from .engines import mtp, vllm_backends
@@ -76,6 +76,13 @@ def recommended_engine(model: Dict[str, Any], hw: Dict[str, Any]) -> str:
 @router.get("/hardware")
 def api_hardware():
     return get_hardware()
+
+
+@router.get("/engine-versions")
+def api_engine_versions():
+    hw = get_hardware()
+    return engine_versions.get_versions(hw["engines"].get("llamacpp_path"),
+                                        settings.data.get("vllm_path"))
 
 
 @router.get("/about")

@@ -113,6 +113,18 @@
       "help": "Keeps this many GB of each GPU's share of the model in system RAM and copies it to the GPU when needed. This lets a model that is slightly too big run at all, but every generated token waits on those copies over the PCIe slot, so expect generation to be many times slower (around 10x). A last resort: a smaller or more compressed version of the model is usually the better choice."
     },
     {
+      "key": "kv_offloading_size",
+      "flag": "--kv-offloading-size",
+      "label": "Conversation memory in system RAM (GB)",
+      "type": "int",
+      "default": null,
+      "min": 1,
+      "max": 128,
+      "category": "advanced",
+      "advanced": true,
+      "help": "Reserve this much system RAM for older conversation memory when GPU memory fills up. Moving cache over PCIe slows responses. Leave empty for GPU-only cache. The value is shared across GPUs."
+    },
+    {
       "key": "enforce_eager",
       "flag": "--enforce-eager",
       "label": "Disable CUDA graphs",

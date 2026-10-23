@@ -20,6 +20,7 @@ export const api = {
   startUpdate: (checkId) => request('/api/updates', { method: 'POST', body: JSON.stringify({ check_id: checkId }) }),
   updateStatus: () => request('/api/updates'),
   hardware: () => request('/api/hardware'),
+  engineVersions: () => request('/api/engine-versions'),
   about: () => request('/api/about'),
   models: () => request('/api/models'),
   search: (q) => request(`/api/models/search?q=${encodeURIComponent(q)}`),

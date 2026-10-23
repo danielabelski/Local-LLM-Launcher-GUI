@@ -315,7 +315,7 @@ input::placeholder { color: var(--ink-3); }
 .engine-dot { width: 9px; height: 9px; border-radius: 50%; }
 .engine-dot.on { background: var(--signal-green); box-shadow: 0 0 0 1px #008525; }
 .engine-dot.off { background: var(--ink-4); }
-.engine-name { font-weight: 600; font-size: 13px; flex: 1; }
+.engine-name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .engine-note {
   font-family: var(--font-mono); font-size: 11px; color: var(--ink-3);
 }

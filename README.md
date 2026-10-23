@@ -62,6 +62,11 @@ the error into something you can actually act on.
    installed and tells you what's missing, with instructions, on the
    **Settings** page.
 
+The Dashboard shows each installed llama.cpp and vLLM version beside GitHub's
+latest stable release. llama.cpp nightly builds include a separate build number,
+which may advance between stable releases. If GitHub is unavailable, the
+installed version still appears.
+
 ## Getting it running
 
 ### Optional vLLM backend tuning
@@ -145,7 +150,8 @@ repeated. Engine source updates stay available only from the computer itself.
 ## Using it — the short version
 
 1. **Dashboard** — confirms the app can see your hardware (GPU, memory) and
-   which engines (vLLM / llama.cpp) it found. There's also a one-click
+   which engines (vLLM / llama.cpp) it found, with installed and latest release
+   versions. There's also a one-click
    launcher for **[Open WebUI](https://github.com/open-webui/open-webui)** — a
    polished chat interface — right under "Running now." If it's not installed,
    the button is greyed out with the install command ready to copy; if it is,
